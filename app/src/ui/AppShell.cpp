@@ -525,6 +525,16 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 		const LONG x = GET_X_LPARAM(msg->lParam);
 		const LONG y = GET_Y_LPARAM(msg->lParam);
 
+		const QPoint logicalPos = mapFromGlobal(QPoint(x, y));
+		auto hitTitleButton = [this, logicalPos](QWidget* button) {
+			return button && button->isVisible() && button->geometry().contains(button->parentWidget()->mapFrom(this, logicalPos));
+		};
+		if (hitTitleButton(btnMin) || hitTitleButton(btnMax) || hitTitleButton(btnClose) ||
+			(antInput && antInput->isVisible() && antInput->geometry().contains(antInput->parentWidget()->mapFrom(this, logicalPos)))) {
+			*result = HTCLIENT;
+			return true;
+		}
+
 		// 允许缩放的条件（根据窗口最小最大宽高判断）
 		const bool canResizeWidth = minimumWidth() != maximumWidth();
 		const bool canResizeHeight = minimumHeight() != maximumHeight();
@@ -581,9 +591,9 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 			*result = HTBOTTOM;
 			return true;
 		}
-		// 如果当前是首页, 标题栏隐藏, 因此不需要带上标题栏右侧全部控件的宽度 重置系统标题栏拖动区域
-		bool isHomePage = stackedWidget->currentIndex() == 0; // 判断是否是首页
-		int rightBoundary = isHomePage ? winRect.right : winRect.right - m_widgetTotalWidthPhysicalPixels;
+		// 标题栏右侧是搜索框、最小化、最大化、关闭按钮，必须排除出 HTCAPTION。
+		// 否则 Windows 会把这些按钮区域当成拖动标题栏，导致按钮收不到 clicked 信号。
+		int rightBoundary = winRect.right - m_widgetTotalWidthPhysicalPixels;
 		// 设置标题栏拖动区域 只有该区域内才允许拖动窗口
 		if (x > winRect.left + m_titleLeftTotalWidthPhysicalPixels && x < rightBoundary
 			&& y > winRect.top && y < winRect.top + m_titleBarHeightPhysicalPixels)
