@@ -1,0 +1,285 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{5F661C08-6B02-4AD1-83DC-89C7B36B178D}</ProjectGuid>
+    <Keyword>QtVS_v304</Keyword>
+    <WindowsTargetPlatformVersion Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">10.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">10.0</WindowsTargetPlatformVersion>
+    <QtMsBuild Condition="'$(QtMsBuild)'=='' OR !Exists('$(QtMsBuild)\qt.targets')">$(MSBuildProjectDirectory)\QtMsBuild</QtMsBuild>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Condition="Exists('$(QtMsBuild)\qt_defaults.props')">
+    <Import Project="$(QtMsBuild)\qt_defaults.props" />
+  </ImportGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
+    <QtInstall>6.6.3_msvc2019_64</QtInstall>
+    <QtModules>core;gui;widgets;openglwidgets;multimedia;multimediawidgets;svg</QtModules>
+    <QtBuildConfig>debug</QtBuildConfig>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
+    <QtInstall>6.6.3_msvc2019_64</QtInstall>
+    <QtModules>core;gui;widgets;openglwidgets;multimedia;multimediawidgets;svg</QtModules>
+    <QtBuildConfig>release</QtBuildConfig>
+  </PropertyGroup>
+  <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') or !Exists('$(QtMsBuild)\qt.props')">
+    <Message Importance="High" Text="QtMsBuild: could not locate qt.targets, qt.props; project may not build correctly." />
+  </Target>
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(QtMsBuild)\Qt.props" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="$(QtMsBuild)\Qt.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\Code\QtAntDesign\QtAntDesign\ThirdParty\QR-Code-generator-master;D:\Code\QtAntDesign\QtAntDesign\ThirdParty\FastGaussianBlur-main;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link />
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\Code\QtAntDesign\QtAntDesign\ThirdParty\QR-Code-generator-master;D:\Code\QtAntDesign\QtAntDesign\ThirdParty\FastGaussianBlur-main;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link />
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
+    <ClCompile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="Configuration">
+    <ClCompile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="AboutPage.cpp" />
+    <ClCompile Include="AnimatedNumber.cpp" />
+    <ClCompile Include="AntBaseInput.cpp" />
+    <ClCompile Include="AntBaseListView.cpp" />
+    <ClCompile Include="AntBaseTableView.cpp" />
+    <ClCompile Include="AntButton.cpp" />
+    <ClCompile Include="AntCellWidget.cpp" />
+    <ClCompile Include="AntChatListView.cpp" />
+    <ClCompile Include="AntComboBox.cpp" />
+    <ClCompile Include="AntBaseDoubleSpinBox.cpp" />
+    <ClCompile Include="AntDoubleNumberInput.cpp" />
+    <ClCompile Include="AntInput.cpp" />
+    <ClCompile Include="AntBaseSpinBox.cpp" />
+    <ClCompile Include="AntNumberInput.cpp" />
+    <ClCompile Include="AntMessage.cpp" />
+    <ClCompile Include="AntMessageManager.cpp">
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
+    </ClCompile>
+    <ClCompile Include="AntProfileItemDelegate.cpp" />
+    <ClCompile Include="AntProfileTable.cpp" />
+    <ClCompile Include="AntRadioButton.cpp" />
+    <ClCompile Include="AntScrollArea.cpp" />
+    <ClCompile Include="AntSlider.cpp" />
+    <ClCompile Include="AntTabBarWidget.cpp" />
+    <ClCompile Include="AntTabWidget.cpp" />
+    <ClCompile Include="AntTabWidgetContainer.cpp" />
+    <ClCompile Include="AntToggleButton.cpp" />
+    <ClCompile Include="AntTooltip.cpp" />
+    <ClCompile Include="AntTooltipManager.cpp" />
+    <ClCompile Include="AntTooltipViewController.cpp" />
+    <ClCompile Include="AntTreeView.cpp" />
+    <ClCompile Include="BadgeWidget.cpp" />
+    <ClCompile Include="BubbleViewController.cpp" />
+    <ClCompile Include="CardWidget.cpp" />
+    <ClCompile Include="CarouselCard.cpp" />
+    <ClCompile Include="CarouselWidget.cpp" />
+    <ClCompile Include="DrawerWidget.cpp" />
+    <ClCompile Include="FlowLayout.cpp" />
+    <ClCompile Include="FramelessVideoWindow.cpp" />
+    <ClCompile Include="GaussianBlur.cpp" />
+    <ClCompile Include="GlassWidget.cpp" />
+    <ClCompile Include="HomePage.cpp" />
+    <ClCompile Include="PaginationWidget.cpp" />
+    <ClCompile Include="QrCodeWidget.cpp" />
+    <ClCompile Include="TabContentWidget.cpp" />
+    <ClCompile Include="ThemeSwitcher.cpp" />
+    <ClCompile Include="ThirdParty\QR-Code-generator-master\qrcodegen.cpp" />
+    <ClCompile Include="TransparentMask.cpp" />
+    <ClCompile Include="CustomToolButton.cpp" />
+    <ClCompile Include="DesignSystem.cpp" />
+    <ClCompile Include="FunctionPage.cpp" />
+    <ClCompile Include="LoadingArc.cpp" />
+    <ClCompile Include="LogoWidget.cpp" />
+    <ClCompile Include="DialogViewController.cpp" />
+    <ClCompile Include="ErrorTipLabel.cpp" />
+    <ClCompile Include="LoginPageWidget.cpp" />
+    <ClCompile Include="MaskWidget.cpp" />
+    <ClCompile Include="MaterialDialog.cpp" />
+    <ClCompile Include="MaterialLineEdit.cpp" />
+    <ClCompile Include="MaterialProgressBar.cpp" />
+    <ClCompile Include="MaterialSpinner.cpp" />
+    <ClCompile Include="MaterialTabWidget.cpp" />
+    <ClCompile Include="NoDataWidget.cpp" />
+    <ClCompile Include="NotificationManager.cpp" />
+    <ClCompile Include="NotificationWidget.cpp" />
+    <ClCompile Include="PopupViewController.cpp" />
+    <ClCompile Include="PopupWidget.cpp" />
+    <ClCompile Include="ProfilePage.cpp" />
+    <ClCompile Include="RegisterPageWidget.cpp" />
+    <ClCompile Include="Ripple.cpp" />
+    <ClCompile Include="SettingsPage.cpp" />
+    <ClCompile Include="SkeletonWidget.cpp" />
+    <ClCompile Include="SlideStackedWidget.cpp" />
+    <ClCompile Include="StandardDialogPage.cpp" />
+    <ClCompile Include="TagWidget.cpp" />
+    <ClCompile Include="UserInfoBubble.cpp" />
+    <ClCompile Include="Win11CheckButton.cpp" />
+    <QtRcc Include="QtAntDesign.qrc" />
+    <QtUic Include="QtAntDesign.ui" />
+    <QtMoc Include="QtAntDesign.h" />
+    <ClCompile Include="CircularAvatar.cpp" />
+    <ClCompile Include="QtAntDesign.cpp" />
+    <ClCompile Include="main.cpp">
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="QrCodeWidget.h" />
+    <QtMoc Include="AntBaseInput.h" />
+    <QtMoc Include="AntInput.h" />
+    <QtMoc Include="AntNumberInput.h" />
+    <QtMoc Include="AntDoubleNumberInput.h" />
+    <QtMoc Include="FlowLayout.h" />
+    <QtMoc Include="DrawerWidget.h" />
+    <QtMoc Include="BadgeWidget.h" />
+    <QtMoc Include="AntBaseListView.h" />
+    <QtMoc Include="AntChatListView.h" />
+    <QtMoc Include="AntBaseTableView.h" />
+    <QtMoc Include="AntProfileTable.h" />
+    <QtMoc Include="AntProfileItemDelegate.h" />
+    <QtMoc Include="AntCellWidget.h" />
+    <QtMoc Include="AntTabWidget.h" />
+    <QtMoc Include="AntTabBarWidget.h" />
+    <QtMoc Include="AntTabWidgetContainer.h" />
+    <QtMoc Include="TabContentWidget.h" />
+    <QtMoc Include="PaginationWidget.h" />
+    <QtMoc Include="AntTreeView.h" />
+    <QtMoc Include="ThemeSwitcher.h" />
+    <QtMoc Include="FramelessVideoWindow.h" />
+    <ClInclude Include="GaussianBlur.h" />
+    <QtMoc Include="GlassWidget.h" />
+    <QtMoc Include="HomePage.h" />
+    <ClInclude Include="ThirdParty\FastGaussianBlur-main\fast_gaussian_blur_template.h" />
+    <ClInclude Include="ThirdParty\QR-Code-generator-master\qrcodegen.hpp" />
+    <QtMoc Include="TagWidget.h" />
+    <QtMoc Include="Win11CheckButton.h" />
+    <QtMoc Include="UserInfoBubble.h" />
+    <QtMoc Include="CircularAvatar.h" />
+    <QtMoc Include="AntButton.h" />
+    <QtMoc Include="AntMessage.h" />
+    <QtMoc Include="AntMessageManager.h" />
+    <QtMoc Include="Ripple.h" />
+    <QtMoc Include="AntTooltip.h" />
+    <QtMoc Include="AntTooltipManager.h" />
+    <QtMoc Include="MaskWidget.h" />
+    <QtMoc Include="MaterialDialog.h" />
+    <QtMoc Include="MaterialLineEdit.h" />
+    <QtMoc Include="ErrorTipLabel.h" />
+    <QtMoc Include="LoginPageWidget.h" />
+    <QtMoc Include="SlideStackedWidget.h" />
+    <QtMoc Include="ProfilePage.h" />
+    <QtMoc Include="DialogViewController.h" />
+    <QtMoc Include="BubbleViewController.h" />
+    <QtMoc Include="LogoWidget.h" />
+    <QtMoc Include="RegisterPageWidget.h" />
+    <QtMoc Include="FunctionPage.h" />
+    <QtMoc Include="SettingsPage.h" />
+    <QtMoc Include="AboutPage.h" />
+    <QtMoc Include="CustomToolButton.h" />
+    <QtMoc Include="MaterialTabWidget.h" />
+    <QtMoc Include="AntToggleButton.h" />
+    <QtMoc Include="StandardDialogPage.h" />
+    <QtMoc Include="MaterialProgressBar.h" />
+    <QtMoc Include="MaterialSpinner.h" />
+    <QtMoc Include="AntRadioButton.h" />
+    <QtMoc Include="AntSlider.h" />
+    <QtMoc Include="NoDataWidget.h" />
+    <QtMoc Include="AnimatedNumber.h" />
+    <QtMoc Include="SkeletonWidget.h" />
+    <QtMoc Include="NotificationWidget.h" />
+    <QtMoc Include="NotificationManager.h" />
+    <QtMoc Include="LoadingArc.h" />
+    <QtMoc Include="DesignSystem.h" />
+    <QtMoc Include="AntBaseSpinBox.h" />
+    <QtMoc Include="AntBaseDoubleSpinBox.h" />
+    <QtMoc Include="AntComboBox.h" />
+    <QtMoc Include="PopupWidget.h" />
+    <QtMoc Include="TransparentMask.h" />
+    <QtMoc Include="PopupViewController.h" />
+    <QtMoc Include="AntTooltipViewController.h" />
+    <QtMoc Include="CardWidget.h" />
+    <QtMoc Include="CarouselCard.h" />
+    <QtMoc Include="CarouselWidget.h" />
+    <QtMoc Include="AntScrollArea.h" />
+    <ClInclude Include="StyleSheet.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">
+    <Import Project="$(QtMsBuild)\qt.targets" />
+  </ImportGroup>
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

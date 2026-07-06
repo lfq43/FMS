@@ -1,0 +1,37 @@
+# Build output
+build/
+app/build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.cmake
+!app/CMakeLists.txt
+
+# Qt Creator / IDE
+.qtcreator/
+app/.qtcreator/
+.vscode/
+*.user
+*.user.*
+
+# Compiled binaries and debug symbols
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+
+# Generated Qt files
+*_autogen/
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
