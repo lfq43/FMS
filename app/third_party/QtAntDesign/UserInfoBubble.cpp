@@ -1,14 +1,61 @@
-﻿#include "UserInfoBubble.h"
-#include <QVBoxLayout>
+#include "UserInfoBubble.h"
+
+#include <QDateTime>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
+#include <QPushButton>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTimer>
-#include <QDateTime>
-#include "StyleSheet.h"
+#include <QVBoxLayout>
+
 #include "AntMessageManager.h"
+#include "AuthService.h"
 #include "DesignSystem.h"
+#include "StyleSheet.h"
+
+namespace {
+QString formatStorageSize(qint64 bytes)
+{
+	if (bytes < 1024) {
+		return QString("%1 B").arg(bytes);
+	}
+	const double kb = bytes / 1024.0;
+	if (kb < 1024) {
+		return QString::number(kb, 'f', 1) + " KB";
+	}
+	const double mb = kb / 1024.0;
+	if (mb < 1024) {
+		return QString::number(mb, 'f', 1) + " MB";
+	}
+	return QString::number(mb / 1024.0, 'f', 1) + " GB";
+}
+
+int currentUserFileCount()
+{
+	if (!AuthService::isLoggedIn()) {
+		return 0;
+	}
+
+	QSqlQuery query;
+	query.prepare("SELECT COUNT(*) FROM files WHERE owner_id = :owner_id AND is_trashed = 0");
+	query.bindValue(":owner_id", AuthService::currentUserId());
+	if (!query.exec() || !query.next()) {
+		qDebug() << "查询用户文件数量失败:" << query.lastError().text();
+		return 0;
+	}
+	return query.value(0).toInt();
+}
+
+QString displayLastLogin()
+{
+	const QString lastLogin = AuthService::currentLastLoginAt();
+	return lastLogin.isEmpty() ? QStringLiteral("本次为首次登录") : lastLogin;
+}
+}
 
 UserInfoBubble::UserInfoBubble(QWidget* parent)
 	: QWidget(parent)
@@ -20,102 +67,111 @@ UserInfoBubble::UserInfoBubble(QWidget* parent)
 	layout->setContentsMargins(margin + arrowWidth + spacing, margin, margin + spacing, margin);
 	layout->setSpacing(3);
 
-	// 创建统一字体对象
 	QFont font;
-	font.setPointSize(11);  // 使用磅值单位（适应DPI缩放）
+	font.setPointSize(11);
 
-	// 顶部
-	QLabel* nameLabel = new QLabel("用户名：小明", this);
-	nameLabel->setFont(font);
+	m_nameLabel = new QLabel(this);
+	m_nameLabel->setFont(font);
 
-	// 中心
 	font.setPointSize(10);
-	QWidget* gradientWidget = new QWidget(this);
-	gradientWidget->setObjectName("gradientWidget");
-	gradientWidget->setMinimumHeight(50);
+	m_roleLabel = new QLabel(this);
+	m_storageLabel = new QLabel(this);
+	m_fileCountLabel = new QLabel(this);
+	m_lastLoginLabel = new QLabel(this);
+	m_roleLabel->setFont(font);
+	m_storageLabel->setFont(font);
+	m_fileCountLabel->setFont(font);
+	m_lastLoginLabel->setFont(font);
+
+	QWidget* infoWidget = new QWidget(this);
+	infoWidget->setObjectName("storageInfoWidget");
+	infoWidget->setMinimumHeight(86);
 	auto theme = DesignSystem::instance()->currentTheme();
-	gradientWidget->setStyleSheet(StyleSheet::gradientQss(theme.vipGradientStartColor, theme.vipGradientMidColor, theme.vipGradientEndColor));
+	infoWidget->setStyleSheet(StyleSheet::gradientQss(theme.vipGradientStartColor, theme.vipGradientMidColor, theme.vipGradientEndColor));
 
-	QWidget* leftWid = new QWidget(gradientWidget);
-	m_antBtn = new AntButton("续费", 10, gradientWidget);
-	m_antBtn->setMinimumHeight(50);
+	QVBoxLayout* infoLayout = new QVBoxLayout(infoWidget);
+	infoLayout->setContentsMargins(12, 8, 12, 8);
+	infoLayout->setSpacing(4);
+	infoLayout->addWidget(m_roleLabel);
+	infoLayout->addWidget(m_storageLabel);
+	infoLayout->addWidget(m_fileCountLabel);
+	infoLayout->addWidget(m_lastLoginLabel);
 
-	QLabel* vipLabel = new QLabel("会员到期时间:", this);
-
-	QString currentTimeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-	QLabel* timeLabel = new QLabel(currentTimeStr, this);
-
-	vipLabel->setFont(font);
-	timeLabel->setFont(font);
-
-	QHBoxLayout* hlay = new QHBoxLayout(gradientWidget);
-	QVBoxLayout* vlay = new QVBoxLayout(leftWid);
-
-	hlay->addWidget(leftWid, 3);
-	hlay->addWidget(m_antBtn, 1);
-	vlay->addWidget(vipLabel);
-	vlay->addWidget(timeLabel);
-
-	// 底部
 	QWidget* bottomWid = new QWidget(this);
 	QHBoxLayout* bottomHlay = new QHBoxLayout(bottomWid);
 	bottomHlay->setContentsMargins(0, 0, 0, 0);
+
 	QStringList strList;
-	strList << "签到" << "退出登录";
+	strList << "个人中心" << "退出登录";
 	QStringList objectNames, qssList;
-	objectNames << "signInButton" << "logoutButton";
+	objectNames << "profileButton" << "logoutButton";
 	qssList << StyleSheet::signInBtnQss() << StyleSheet::logoutBtnQss();
 
 	for (int i = 0; i < strList.size(); ++i)
 	{
 		QPushButton* btn = new QPushButton(strList[i], bottomWid);
 		btn->setFont(font);
-		btn->setObjectName(objectNames[i]);		// 设置对象名
+		btn->setObjectName(objectNames[i]);
 		btn->setMinimumWidth(70);
-		btn->setMinimumHeight(25);				// 设置一个最小高度，让按钮看起来更舒服
-		btn->setCursor(Qt::PointingHandCursor); // 设置鼠标悬停样式为手型
+		btn->setMinimumHeight(25);
+		btn->setCursor(Qt::PointingHandCursor);
 		btn->setStyleSheet(qssList[i]);
-		bottomHlay->addWidget(btn);				// 将按钮添加到水平布局中
+		bottomHlay->addWidget(btn);
 
-		// 在两个按钮中间插入 spacer
 		if (i == 0)
 		{
-			bottomHlay->addStretch(); // 插入一个弹性间距，把第一个按钮和第二个按钮分开
+			bottomHlay->addStretch();
 		}
 
-		// 连接信号槽
 		connect(btn, &QPushButton::clicked, this, [this]()
 			{
 				QPushButton* btn = qobject_cast<QPushButton*>(sender());
 				if (!btn) return;
 
-				QString btnName = btn->objectName();
-
-				if (btnName == "signInButton")
+				if (btn->objectName() == "profileButton")
 				{
-					// 签到逻辑
-					AntMessageManager::instance()->showMessage(AntMessage::Success, "签到成功,再接再厉");
+					AntMessageManager::instance()->showMessage(AntMessage::Info, "个人中心功能将在用户模块中完善");
 				}
-				else if (btnName == "logoutButton")
+				else if (btn->objectName() == "logoutButton")
 				{
-					// 退出逻辑
+					AuthService::logout();
 					emit exitLogin(false);
 				}
 			});
 	}
 
-	// 主布局
 	layout->addSpacing(8);
-	layout->addWidget(nameLabel);
+	layout->addWidget(m_nameLabel);
 	layout->addSpacing(8);
-	layout->addWidget(gradientWidget);
+	layout->addWidget(infoWidget);
 	layout->addSpacing(8);
 	layout->addWidget(bottomWid);
 	layout->addSpacing(14);
+
+	refreshUserInfo();
 }
 
 UserInfoBubble::~UserInfoBubble()
 {
+}
+
+void UserInfoBubble::refreshUserInfo()
+{
+	const QString displayName = AuthService::currentDisplayName().isEmpty()
+		? QStringLiteral("未登录用户")
+		: AuthService::currentDisplayName();
+	const QString username = AuthService::currentUsername().isEmpty()
+		? QStringLiteral("-")
+		: AuthService::currentUsername();
+	const QString storageText = QString("%1 / %2")
+		.arg(formatStorageSize(AuthService::currentStorageUsedBytes()))
+		.arg(formatStorageSize(AuthService::currentStorageQuotaBytes()));
+
+	m_nameLabel->setText(QString("当前用户：%1").arg(displayName));
+	m_roleLabel->setText(QString("账号：%1").arg(username));
+	m_storageLabel->setText(QString("存储空间：%1").arg(storageText));
+	m_fileCountLabel->setText(QString("文件数量：%1").arg(currentUserFileCount()));
+	m_lastLoginLabel->setText(QString("上次登录：%1").arg(displayLastLogin()));
 }
 
 void UserInfoBubble::paintEvent(QPaintEvent*)
@@ -124,44 +180,28 @@ void UserInfoBubble::paintEvent(QPaintEvent*)
 	p.setRenderHint(QPainter::Antialiasing);
 	p.setPen(Qt::NoPen);
 
-	// 参数定义
 	const int radius = 6;
-	const int shadowWidth = 10;
 	QRect rectBubble(arrowWidth, 0, width() - 5, height() - 5);
 	QRectF r = rectBubble.adjusted(margin, margin, -margin, -margin);
 
-	int ax = r.left();                  // 箭头连接处 X
-	int ay = arrowOffsetY;             // 箭头顶部 Y
-	int ah = arrowHeight;              // 箭头高度
+	int ax = r.left();
+	int ay = arrowOffsetY;
+	int ah = arrowHeight;
 
-	// ---------------- 构建连通路径 ----------------
 	QPainterPath path;
-
-	// 起点：左箭头顶部
 	path.moveTo(ax, ay);
 	path.lineTo(ax - arrowWidth, ay + ah / 2);
-	path.lineTo(ax, ay + ah);           // 箭头底部
-
-	// 左边直线到左下角圆角开始
+	path.lineTo(ax, ay + ah);
 	path.lineTo(ax, r.bottom() - radius);
-	path.arcTo(QRectF(r.left(), r.bottom() - 2 * radius, 2 * radius, 2 * radius), 180, 90); // 左下角
-
-	// 下边
+	path.arcTo(QRectF(r.left(), r.bottom() - 2 * radius, 2 * radius, 2 * radius), 180, 90);
 	path.lineTo(r.right() - radius, r.bottom());
-	path.arcTo(QRectF(r.right() - 2 * radius, r.bottom() - 2 * radius, 2 * radius, 2 * radius), 270, 90); // 右下角
-
-	// 右边
+	path.arcTo(QRectF(r.right() - 2 * radius, r.bottom() - 2 * radius, 2 * radius, 2 * radius), 270, 90);
 	path.lineTo(r.right(), r.top() + radius);
-	path.arcTo(QRectF(r.right() - 2 * radius, r.top(), 2 * radius, 2 * radius), 0, 90); // 右上角
-
-	// 上边
+	path.arcTo(QRectF(r.right() - 2 * radius, r.top(), 2 * radius, 2 * radius), 0, 90);
 	path.lineTo(r.left() + radius, r.top());
-	path.arcTo(QRectF(r.left(), r.top(), 2 * radius, 2 * radius), 90, 90); // 左上角
-
-	// 封闭路径：回到箭头顶部
+	path.arcTo(QRectF(r.left(), r.top(), 2 * radius, 2 * radius), 90, 90);
 	path.lineTo(ax, ay);
 
-	// ---------------- 绘制气泡主体 ----------------
 	p.setBrush(DesignSystem::instance()->currentTheme().userBubbleBgColor);
 	p.drawPath(path);
 }
@@ -174,7 +214,7 @@ void UserInfoBubble::leaveEvent(QEvent* e)
 		{
 			if (!this->underMouse())
 			{
-				emit requestHide(); // 通知外部隐藏，避免气泡自己控制自己
+				emit requestHide();
 			}
 		});
 }

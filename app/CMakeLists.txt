@@ -58,7 +58,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         src/core/DatabaseManager.h src/core/DatabaseManager.cpp
         src/services/AuthService.h src/services/AuthService.cpp
         src/services/FileService.h src/services/FileService.cpp
-        src/services/FileManagerService.h src/services/FileManagerService.cpp
+        src/services/FolderService.h src/services/FolderService.cpp
+
     )
 else()
     add_executable(FMS

@@ -8,6 +8,7 @@
 #include "Win11CheckButton.h"
 #include "AntButton.h"
 #include "LogoWidget.h"
+#include "AuthService.h"
 
 LoginPageWidget::LoginPageWidget(QWidget* parent)
 	: QWidget(parent)
@@ -90,6 +91,10 @@ LoginPageWidget::LoginPageWidget(QWidget* parent)
 	Win11CheckButton* radioBtn = new Win11CheckButton(leftWidget);
 	radioBtn->setFont(font);
 	radioBtn->setText("记住账号");
+	radioBtn->setChecked(AuthService::rememberedLoginEnabled());
+	if (radioBtn->isChecked()) {
+		accountEdit->setText(AuthService::rememberedUsername());
+	}
 	// sub2
 	QWidget* subWidget2 = new QWidget(leftWidget);
 	QHBoxLayout* subLay2 = new QHBoxLayout(subWidget2);
@@ -104,7 +109,7 @@ LoginPageWidget::LoginPageWidget(QWidget* parent)
 	// 按钮
 	AntButton* antBtn = new AntButton("登录", 11.5, leftWidget);
 	antBtn->setFixedHeight(50);
-	connect(antBtn, &AntButton::clicked, this, [this, errorTips, accountEdit, passwordEdit]()
+	connect(antBtn, &AntButton::clicked, this, [this, errorTips, accountEdit, passwordEdit, radioBtn]()
 		{
 			bool hasError = false;
 
@@ -132,9 +137,21 @@ LoginPageWidget::LoginPageWidget(QWidget* parent)
 
 			if (!hasError)
 			{
-				emit loginSuccess();
-				accountEdit->clear();
-				passwordEdit->clear();
+				AuthService authService;
+				if (authService.login(accountEdit->text().trimmed(), passwordEdit->text()))
+				{
+					AuthService::rememberCurrentLogin(radioBtn->isChecked());
+					emit loginSuccess();
+					if (!radioBtn->isChecked()) {
+						accountEdit->clear();
+					}
+					passwordEdit->clear();
+				}
+				else
+				{
+					passwordEdit->errorHint();
+					errorTips[1]->showError("用户名或密码错误!");
+				}
 			}
 		});
 

@@ -1,4 +1,4 @@
-#include "AppShell.h"
+﻿#include "AppShell.h"
 #include <qevent.h>
 #include <qlayout.h>
 #include <qpainter.h>
@@ -14,19 +14,145 @@
 #include <QWindow>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDir>
+#include <QDirIterator>
+#include <QDesktopServices>
+#include <QDrag>
 #include <QFrame>
 #include <QHeaderView>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMimeData>
+#include <QMessageBox>
+#include <QPainterPath>
+#include <QProcess>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QPushButton>
+#include <QStyle>
+#include <QUrl>
 #include "NotificationManager.h"
 #include "DesignSystem.h"
 #include "TransparentMask.h"
 #include "MaskWidget.h"
 #include "ThemeSwitcher.h"
+#include "AntToggleButton.h"
+#include "AuthService.h"
+#include "FileService.h"
+#include "FolderService.h"
+
+#include <functional>
+#include <memory>
 
 namespace {
-// 将字节数转换成界面上更容易阅读的 B/KB/MB/GB 文本。
+enum class LineIcon
+{
+	File,
+	Folder,
+	Refresh,
+	Trash,
+	More
+};
+
+QIcon makeLineIcon(LineIcon icon, const QColor& color = QColor("#1677ff"))
+{
+	QPixmap pixmap(24, 24);
+	pixmap.fill(Qt::transparent);
+
+	QPainter painter(&pixmap);
+	painter.setRenderHint(QPainter::Antialiasing);
+	QPen pen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+	painter.setPen(pen);
+	painter.setBrush(Qt::NoBrush);
+
+	if (icon == LineIcon::File) {
+		painter.drawRoundedRect(QRectF(6, 3.5, 12, 17), 2, 2);
+		painter.drawLine(QPointF(13.5, 4), QPointF(18, 8.5));
+		painter.drawLine(QPointF(14, 4), QPointF(14, 9));
+		painter.drawLine(QPointF(14, 9), QPointF(18, 9));
+		painter.drawLine(QPointF(8.5, 13), QPointF(15.5, 13));
+		painter.drawLine(QPointF(8.5, 16), QPointF(14, 16));
+	}
+	else if (icon == LineIcon::Folder) {
+		painter.drawPath([] {
+			QPainterPath path;
+			path.moveTo(3.5, 8);
+			path.quadTo(3.5, 6, 5.5, 6);
+			path.lineTo(10, 6);
+			path.lineTo(12, 8.5);
+			path.lineTo(18.5, 8.5);
+			path.quadTo(20.5, 8.5, 20.5, 10.5);
+			path.lineTo(20.5, 17.5);
+			path.quadTo(20.5, 19.5, 18.5, 19.5);
+			path.lineTo(5.5, 19.5);
+			path.quadTo(3.5, 19.5, 3.5, 17.5);
+			path.closeSubpath();
+			return path;
+		}());
+	}
+	else if (icon == LineIcon::Refresh) {
+		painter.drawArc(QRectF(5.2, 5.2, 13.6, 13.6), 35 * 16, 285 * 16);
+		painter.drawLine(QPointF(18.1, 7.2), QPointF(18.1, 12.2));
+		painter.drawLine(QPointF(18.1, 7.2), QPointF(13.2, 7.2));
+		painter.drawArc(QRectF(5.2, 5.2, 13.6, 13.6), 215 * 16, 85 * 16);
+	}
+	else if (icon == LineIcon::Trash) {
+		painter.drawLine(QPointF(8, 7), QPointF(16, 7));
+		painter.drawLine(QPointF(10, 5), QPointF(14, 5));
+		painter.drawRoundedRect(QRectF(7, 9, 10, 11), 2, 2);
+		painter.drawLine(QPointF(10, 11.5), QPointF(10, 17.5));
+		painter.drawLine(QPointF(14, 11.5), QPointF(14, 17.5));
+	}
+	else if (icon == LineIcon::More) {
+		painter.setBrush(color);
+		painter.setPen(Qt::NoPen);
+		painter.drawEllipse(QPointF(7, 12), 1.7, 1.7);
+		painter.drawEllipse(QPointF(12, 12), 1.7, 1.7);
+		painter.drawEllipse(QPointF(17, 12), 1.7, 1.7);
+	}
+
+	return QIcon(pixmap);
+}
+
+class IconActionButton : public QPushButton
+{
+public:
+	IconActionButton(LineIcon icon, const QString& tipText, QWidget* parent)
+		: QPushButton(parent), m_tipText(tipText)
+	{
+		setIcon(makeLineIcon(icon));
+		setIconSize(QSize(20, 20));
+		setFixedSize(32, 28);
+		setCursor(Qt::PointingHandCursor);
+		setStyleSheet(
+			"QPushButton { background: transparent; border: none; border-radius: 8px; padding: 4px; }"
+			"QPushButton:disabled { opacity: 0.45; }"
+			"QPushButton:hover:enabled { background: #eaf3ff; }"
+		);
+	}
+
+protected:
+	void enterEvent(QEnterEvent* event) override
+	{
+		QPushButton::enterEvent(event);
+		if (isEnabled() && !m_tipText.isEmpty()) {
+			AntTooltipManager::instance()->showTooltip(this, m_tipText, AntTooltipManager::Position::Top);
+		}
+	}
+
+	void leaveEvent(QEvent* event) override
+	{
+		AntTooltipManager::instance()->hideTooltip();
+		QPushButton::leaveEvent(event);
+	}
+
+private:
+	QString m_tipText;
+};
+
 QString formatFileSize(qint64 bytes)
 {
 	if (bytes < 1024) {
@@ -42,9 +168,160 @@ QString formatFileSize(qint64 bytes)
 	}
 	return QString::number(mb / 1024.0, 'f', 1) + " GB";
 }
+
+QString safeLocalName(QString value)
+{
+	value = value.trimmed();
+	if (value.isEmpty()) {
+		return "未命名文件";
+	}
+
+	const QString invalidChars = "\\/:*?\"<>|";
+	for (const QChar ch : invalidChars) {
+		value.replace(ch, "_");
+	}
+	return value;
 }
 
-// 构建主窗口：初始化无边框窗口、标题栏、导航栏、页面栈、文件列表和全局 UI 管理器。
+bool revealInFileManager(const QString& path)
+{
+	if (path.isEmpty() || !QFileInfo::exists(path)) {
+		return false;
+	}
+
+	const QFileInfo info(path);
+#ifdef Q_OS_WIN
+	if (info.isDir()) {
+		return QProcess::startDetached("explorer.exe", { QDir::toNativeSeparators(info.absoluteFilePath()) });
+	}
+	return QProcess::startDetached("explorer.exe", { "/select," + QDir::toNativeSeparators(info.absoluteFilePath()) });
+#else
+	return QDesktopServices::openUrl(QUrl::fromLocalFile(info.isDir() ? info.absoluteFilePath() : info.absolutePath()));
+#endif
+}
+
+void scanFolderTree(const QString& folderPath, int& folderCount, int& fileCount)
+{
+	folderCount = 0;
+	fileCount = 0;
+
+	QDirIterator iterator(folderPath, QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+	while (iterator.hasNext()) {
+		iterator.next();
+		const QFileInfo info = iterator.fileInfo();
+		if (info.isDir()) {
+			++folderCount;
+		}
+		else if (info.isFile()) {
+			++fileCount;
+		}
+	}
+}
+
+bool confirmLargeFolderImport(QWidget* parent, const QString& folderPath)
+{
+	int folderCount = 0;
+	int fileCount = 0;
+	scanFolderTree(folderPath, folderCount, fileCount);
+
+	const int totalCount = folderCount + fileCount;
+	if (totalCount < 200 && folderCount < 50) {
+		return true;
+	}
+
+	const QFileInfo folderInfo(folderPath);
+	const QString message = QString("将导入“%1”中的 %2 个文件夹、%3 个文件。\n如果选中了项目目录或构建目录，可能会生成大量备份记录。是否继续？")
+		.arg(folderInfo.fileName().isEmpty() ? folderPath : folderInfo.fileName())
+		.arg(folderCount)
+		.arg(fileCount);
+
+	return QMessageBox::question(parent, "确认导入文件夹", message, QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+}
+
+class FileTableWidget : public QTableWidget
+{
+public:
+	using QTableWidget::QTableWidget;
+
+	std::function<void(int fileId, int targetFolderId)> moveFileToFolder;
+
+protected:
+	void mousePressEvent(QMouseEvent* event) override
+	{
+		m_dragStartPos = event->pos();
+		QTableWidget::mousePressEvent(event);
+	}
+
+	void mouseMoveEvent(QMouseEvent* event) override
+	{
+		if (!(event->buttons() & Qt::LeftButton) ||
+			(event->pos() - m_dragStartPos).manhattanLength() < QApplication::startDragDistance()) {
+			QTableWidget::mouseMoveEvent(event);
+			return;
+		}
+
+		const QModelIndex index = indexAt(m_dragStartPos);
+		if (!index.isValid() || index.column() == 5 || !item(index.row(), 0) ||
+			item(index.row(), 0)->data(Qt::UserRole + 1).toString() != "file") {
+			QTableWidget::mouseMoveEvent(event);
+			return;
+		}
+
+		auto* mimeData = new QMimeData();
+		mimeData->setData("application/x-fms-file-id", QByteArray::number(item(index.row(), 0)->data(Qt::UserRole).toInt()));
+
+		QDrag drag(this);
+		drag.setMimeData(mimeData);
+		drag.exec(Qt::MoveAction);
+	}
+
+	void dragEnterEvent(QDragEnterEvent* event) override
+	{
+		if (event->mimeData()->hasFormat("application/x-fms-file-id")) {
+			event->acceptProposedAction();
+			return;
+		}
+		QTableWidget::dragEnterEvent(event);
+	}
+
+	void dragMoveEvent(QDragMoveEvent* event) override
+	{
+		const QModelIndex index = indexAt(event->position().toPoint());
+		if (index.isValid() && item(index.row(), 0) &&
+			item(index.row(), 0)->data(Qt::UserRole + 1).toString() == "folder") {
+			event->acceptProposedAction();
+			return;
+		}
+		event->ignore();
+	}
+
+	void dropEvent(QDropEvent* event) override
+	{
+		if (!event->mimeData()->hasFormat("application/x-fms-file-id")) {
+			QTableWidget::dropEvent(event);
+			return;
+		}
+
+		const QModelIndex index = indexAt(event->position().toPoint());
+		if (!index.isValid() || !item(index.row(), 0) ||
+			item(index.row(), 0)->data(Qt::UserRole + 1).toString() != "folder") {
+			event->ignore();
+			return;
+		}
+
+		const int fileId = event->mimeData()->data("application/x-fms-file-id").toInt();
+		const int targetFolderId = item(index.row(), 0)->data(Qt::UserRole).toInt();
+		if (moveFileToFolder) {
+			moveFileToFolder(fileId, targetFolderId);
+		}
+		event->acceptProposedAction();
+	}
+
+private:
+	QPoint m_dragStartPos;
+};
+}
+
 AppShell::AppShell(QWidget* parent)
 	: QWidget(parent)
 {
@@ -54,7 +331,6 @@ AppShell::AppShell(QWidget* parent)
 	setObjectName("AppShell");
 #ifdef Q_OS_LINUX
 	setWindowFlags(Qt::FramelessWindowHint);
-	// 开启悬浮事件处理鼠标边界样式变化
 	setAttribute(Qt::WA_Hover, true);
 	installEventFilter(this);
 #endif
@@ -68,14 +344,13 @@ AppShell::AppShell(QWidget* parent)
 
 	ui.main_widget->setStyleSheet(StyleSheet::mainQss(DesignSystem::instance()->backgroundColor()));
 
-	// 获取主屏幕尺寸
 	int w = 0, h = 0;
 	QScreen* screen = QGuiApplication::primaryScreen();
 	if (screen)
 	{
-		QSize screenSize = screen->availableSize();		// 可用屏幕大小，不包括任务栏
-		w = int(screenSize.width() * 0.50);  // % 宽度
-		h = int(screenSize.height() * 0.60); // % 高度
+		QSize screenSize = screen->availableSize();
+		w = int(screenSize.width() * 0.50);
+		h = int(screenSize.height() * 0.60);
 		if (w < miniSize.width() && h < miniSize.height())
 		{
 			w = miniSize.width();
@@ -85,27 +360,26 @@ AppShell::AppShell(QWidget* parent)
 	}
 	setContentsMargins(0, 0, 0, 0);
 
-	// 初始化全局设计系统 必须写在最前面 因为它会设置主题和主窗口指针注册一些全局变量
-	DesignSystem::instance()->setThemeMode(DesignSystem::Light);					// 默认亮主题
-	DesignSystem::instance()->setMainWindow(this);									// 获取主窗口指针
+	// 初始化全局设计系统，后续控件会读取主题和主窗口指针。
+	DesignSystem::instance()->setThemeMode(DesignSystem::Light);
+	DesignSystem::instance()->setMainWindow(this);
 	ThemeSwitcher* themeSwitcher = new ThemeSwitcher(this);
 	themeSwitcher->setThemeColor();
-	// 注册全局透明遮罩
+	// 注册全局透明遮罩。
 	TransparentMask* tpMask = new TransparentMask(this);
 	DesignSystem::instance()->setTransparentMask(tpMask);
-	// 全局深色动画遮罩
+	// 注册深色主题切换动画遮罩。
 	MaskWidget* darkMask = new MaskWidget(w, h, this);
 	DesignSystem::instance()->setDarkMask(darkMask);
 
-	// 任务栏 内容区域 导航栏 布局调整
-	ui.navi_widget->setFixedWidth(m_naviWidth); // 希望的宽度
-	ui.navi_widget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);	// 水平方向缩放策略固定
+	// 调整导航栏、标题栏和内容区的基础样式。
+	ui.navi_widget->setFixedWidth(m_naviWidth);
+	ui.navi_widget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 	ui.navi_widget->setStyleSheet(StyleSheet::naviQss(DesignSystem::instance()->widgetBgColor()));
 	ui.titleBar->setStyleSheet(StyleSheet::titleBarQss());
 	ui.central->setStyleSheet(StyleSheet::centralQss());
 	ui.titleBar->setFixedHeight(m_titleBarHeight);
 
-	// 标题栏
 	QHBoxLayout* titleLay = new QHBoxLayout(ui.titleBar);
 	titleLay->setContentsMargins(20, 0, rightMargin, 0);
 	titleLay->setSpacing(titleBarSpacing);
@@ -114,23 +388,22 @@ AppShell::AppShell(QWidget* parent)
 	font.setBold(true);
 	QLabel* title = new QLabel("文枢", ui.titleBar);
 	title->setFont(font);
-	// 创建按钮
+	// 创建标题栏窗口控制按钮。
 	btnMin = new QToolButton(ui.titleBar);
 	btnMax = new QToolButton(ui.titleBar);
 	btnClose = new QToolButton(ui.titleBar);
-	// 设置图标
+	// 设置标题栏按钮图标。
 	btnMin->setIcon(DesignSystem::instance()->btnMinIcon());
 	btnMax->setIcon(DesignSystem::instance()->btnMaxIcon());
 	btnClose->setIcon(DesignSystem::instance()->btnCloseIcon());
-	// 设置QSS
+	// 设置标题栏按钮样式。
 	btnMin->setStyleSheet(StyleSheet::toolBtnQss());
 	btnMax->setStyleSheet(StyleSheet::toolBtnQss());
 	btnClose->setStyleSheet(StyleSheet::toolBtnQss());
-	// 设置固定大小（根据图标适当调整）
 	btnMin->setFixedSize(32, 32);
 	btnMax->setFixedSize(32, 32);
 	btnClose->setFixedSize(34, 34);
-	int extraWidth = 100;	// 额外的间距宽度: 是控件间距以及标题栏两端的间距 自己根据标题栏所有控件的宽度调整
+	int extraWidth = 100;	// 标题栏右侧控件的额外间距宽度。
 	m_widgetTotalWidth = btnMin->width() + btnMax->width() + btnClose->width();
 
 	QStringList searchItems = {
@@ -141,38 +414,32 @@ AppShell::AppShell(QWidget* parent)
 	antInput->setFixedHeight(46);
 	antInput->setPlaceholderText("搜索文件");
 
-	// 标题栏右侧所有控件的长宽转为物理像素后在native事件中限制标题栏的范围
 	qreal dpiScale = QApplication::primaryScreen()->devicePixelRatio();
-	// 计算控件总宽度（逻辑像素） 右侧4个控件3个间隔
 	int widgetTotalWidth = rightMargin + btnMin->width() + btnMax->width() + btnClose->width() +
 		antInput->width() + 3 * titleBarSpacing;
-	// 转换为物理像素
 	m_widgetTotalWidthPhysicalPixels = static_cast<int>(widgetTotalWidth * dpiScale);
-	// 同理转换标题栏左侧
 	m_titleLeftTotalWidthPhysicalPixels = static_cast<int>(m_naviWidth * dpiScale);
-	// 同理转换标题栏高度
 	m_titleBarHeightPhysicalPixels = static_cast<int>(m_titleBarHeight * dpiScale);
 
-	// 将标题和按钮添加到布局
+	// 将标题、搜索框和窗口控制按钮加入标题栏。
 	titleLay->addWidget(title);
 	titleLay->addStretch();
 	titleLay->addWidget(antInput);
 	titleLay->addWidget(btnMin);
 	titleLay->addWidget(btnMax);
 	titleLay->addWidget(btnClose);
-	totalSpacingWidth = 3 * titleBarSpacing;	// 标题栏右侧4个控件中间3个间隔
-
-	// 导航栏添加控件
-	QVBoxLayout* naviLay = new QVBoxLayout(ui.navi_widget);;
+	totalSpacingWidth = 3 * titleBarSpacing;
+	QVBoxLayout* naviLay = new QVBoxLayout(ui.navi_widget);
 	ui.navi_widget->layout()->setContentsMargins(0, 0, 0, 0);
 	CircularAvatar* avatar = new CircularAvatar(QSize(42, 42), ":/Imgs/noLogin.svg", ":/Imgs/github.svg", ui.navi_widget);
-	// 添加页面布局
+	avatar->allowLogin(AuthService::isLoggedIn());
+	// 创建页面容器。
 	QVBoxLayout* contentLay = new QVBoxLayout(ui.central);
 	contentLay->setContentsMargins(0, 0, 0, 0);
 	contentLay->setSpacing(0);
 	stackedWidget = new SlideStackedWidget(ui.central);
 	contentLay->addWidget(stackedWidget);
-	// 添加页面
+	// 创建各主页面。
 	QWidget* homePage = new QWidget(stackedWidget);
 	QWidget* settingsPage = new QWidget(stackedWidget);
 	QWidget* aboutPage = new QWidget(stackedWidget);
@@ -188,16 +455,30 @@ AppShell::AppShell(QWidget* parent)
 	toolbarLayout->setContentsMargins(0, 0, 0, 0);
 	toolbarLayout->setSpacing(12);
 
-	AntButton* addFileBtn = new AntButton("添加文件", 10.5, homePage);
-	addFileBtn->setFixedSize(112, 48);
+	AntButton* addFileBtn = new AntButton("添加", 10.5, homePage);
+	addFileBtn->setFixedSize(96, 48);
+	QPushButton* newFileBtn = new QPushButton("新建文件", homePage);
+	newFileBtn->setFixedSize(88, 34);
+	newFileBtn->setCursor(Qt::PointingHandCursor);
+	QPushButton* newFolderBtn = new QPushButton("新建文件夹", homePage);
+	newFolderBtn->setFixedSize(98, 34);
+	newFolderBtn->setCursor(Qt::PointingHandCursor);
+	QPushButton* backFolderBtn = new QPushButton("返回上级", homePage);
+	backFolderBtn->setEnabled(false);
+	backFolderBtn->setFixedSize(88, 34);
+	backFolderBtn->setCursor(Qt::PointingHandCursor);
 	QPushButton* uploadBtn = new QPushButton("上传", homePage);
 	uploadBtn->setEnabled(false);
 	uploadBtn->setFixedSize(82, 34);
 	uploadBtn->setCursor(Qt::PointingHandCursor);
-	uploadBtn->setStyleSheet(
+	const QString toolbarButtonStyle =
 		"QPushButton { color: #8c8c8c; background: #f5f5f5; border: 1px solid #d9d9d9; border-radius: 6px; }"
 		"QPushButton:enabled { color: #1677ff; background: #ffffff; border-color: #1677ff; }"
-	);
+		"QPushButton:hover:enabled { color: #0958d9; border-color: #0958d9; }";
+	newFileBtn->setStyleSheet(toolbarButtonStyle);
+	newFolderBtn->setStyleSheet(toolbarButtonStyle);
+	backFolderBtn->setStyleSheet(toolbarButtonStyle);
+	uploadBtn->setStyleSheet(toolbarButtonStyle);
 
 	QLabel* localHint = new QLabel("本地文件", homePage);
 	QFont hintFont;
@@ -207,12 +488,24 @@ AppShell::AppShell(QWidget* parent)
 	localHint->setStyleSheet("color: #1f1f1f;");
 
 	toolbarLayout->addWidget(addFileBtn);
+	toolbarLayout->addWidget(newFileBtn);
+	toolbarLayout->addWidget(newFolderBtn);
+	toolbarLayout->addWidget(backFolderBtn);
 	toolbarLayout->addWidget(uploadBtn);
 	toolbarLayout->addStretch();
 	toolbarLayout->addWidget(localHint);
 
-	QTableWidget* fileTable = new QTableWidget(0, 5, homePage);
-	fileTable->setHorizontalHeaderLabels({"文件名", "大小", "类型", "状态", "操作"});
+	QLabel* breadcrumbLabel = new QLabel("全部文件", homePage);
+	breadcrumbLabel->setTextFormat(Qt::RichText);
+	breadcrumbLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+	breadcrumbLabel->setOpenExternalLinks(false);
+	breadcrumbLabel->setCursor(Qt::PointingHandCursor);
+	breadcrumbLabel->setStyleSheet(
+		"QLabel { color: #6b7280; font-size: 13px; padding: 4px 0 10px 0; }"
+	);
+
+	FileTableWidget* fileTable = new FileTableWidget(0, 6, homePage);
+	fileTable->setHorizontalHeaderLabels({"文件名", "大小", "类型", "备份状态", "修改时间", "操作"});
 	fileTable->verticalHeader()->setVisible(false);
 	fileTable->setShowGrid(false);
 	fileTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -220,115 +513,762 @@ AppShell::AppShell(QWidget* parent)
 	fileTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	fileTable->setAlternatingRowColors(false);
 	fileTable->setFrameShape(QFrame::NoFrame);
+	fileTable->setAcceptDrops(true);
+	fileTable->setDragEnabled(true);
+	fileTable->setDropIndicatorShown(true);
+	fileTable->setDragDropMode(QAbstractItemView::DragDrop);
 	fileTable->setStyleSheet(
 		"QTableWidget { background: transparent; border: none; color: #1f1f1f; font-size: 13px; }"
-		"QHeaderView::section { background: #f7f9fc; color: #6b7280; border: none; border-bottom: 1px solid #e8edf3; padding: 9px 12px; font-weight: 600; }"
-		"QTableWidget::item { border-bottom: 1px solid #eef1f5; padding: 8px 12px; }"
-		"QTableWidget::item:selected { background: #eaf3ff; color: #1f1f1f; }"
+		"QHeaderView::section { background: transparent; color: #7b88a1; border: none; border-bottom: 1px solid #edf1f7; padding: 10px 12px; font-weight: 500; }"
+		"QTableWidget::item { border-bottom: 1px solid #f0f3f8; padding: 8px 12px; }"
+		"QTableWidget::item:selected { background: #f3f7ff; color: #1f1f1f; }"
 	);
 	fileTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 	fileTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 	fileTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 	fileTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-	fileTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
-	fileTable->horizontalHeader()->resizeSection(4, 150);
-	fileTable->setColumnWidth(4, 150);
-	fileTable->setIconSize(QSize(18, 18));
+	fileTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+	fileTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);
+	fileTable->horizontalHeader()->resizeSection(5, 132);
+	fileTable->setColumnWidth(5, 132);
+	fileTable->setIconSize(QSize(24, 24));
 
-	auto addFileRow = [fileTable](const QFileInfo& info) {
+	FileService* fileService = new FileService(this);
+	FolderService* folderService = new FolderService(this);
+	auto currentFolderId = std::make_shared<int>(-1);
+
+	auto makeActionButton = [](LineIcon icon, const QString& tipText, QWidget* parent) {
+		return new IconActionButton(icon, tipText, parent);
+	};
+
+	auto makeMoreButton = [](QWidget* parent) {
+		return new IconActionButton(LineIcon::More, "更多操作", parent);
+	};
+
+	auto showTodoMenuMessage = [](const QString& actionName) {
+		AntMessageManager::instance()->showMessage(AntMessage::Info, actionName + "功能将在下一阶段接入");
+	};
+
+	auto chooseTargetFolder = [folderService, fileTable](const QString& title, int currentFolder) {
+		QStringList labels;
+		QList<int> ids;
+		labels << "全部文件";
+		ids << -1;
+
+		std::function<void(int, QString)> collectFolders = [&](int parentId, QString prefix) {
+			const QList<FolderInfo> folders = folderService->listFolders(AuthService::currentUserId(), parentId);
+			for (const FolderInfo& folder : folders) {
+				if (folder.folderId == currentFolder) {
+					continue;
+				}
+				labels << (prefix + folder.name);
+				ids << folder.folderId;
+				collectFolders(folder.folderId, prefix + folder.name + " / ");
+			}
+		};
+		collectFolders(-1, QString());
+
+		bool ok = false;
+		const QString selected = QInputDialog::getItem(fileTable, title, "目标位置：", labels, 0, false, &ok);
+		if (!ok) {
+			return currentFolder;
+		}
+
+		const int selectedIndex = labels.indexOf(selected);
+		return selectedIndex >= 0 ? ids.at(selectedIndex) : currentFolder;
+	};
+
+	auto updateBreadcrumb = [breadcrumbLabel, backFolderBtn, folderService, currentFolderId]() {
+		if (!AuthService::isLoggedIn()) {
+			breadcrumbLabel->setText("<a href='-1' style='color:#1f1f1f;font-weight:600;text-decoration:none;'>全部文件</a>");
+			backFolderBtn->setEnabled(false);
+			return;
+		}
+
+		QList<QPair<int, QString>> parts;
+		parts.append({-1, "全部文件"});
+		const QList<FolderInfo> path = folderService->folderPath(AuthService::currentUserId(), *currentFolderId);
+		for (const FolderInfo& folder : path) {
+			parts.append({folder.folderId, folder.name});
+		}
+		QStringList htmlParts;
+		for (int i = 0; i < parts.size(); ++i) {
+			const QString color = (i == parts.size() - 1) ? "#1f1f1f" : "#8a95aa";
+			const QString weight = (i == parts.size() - 1) ? "600" : "400";
+			htmlParts << QString("<a href='%1' style='color:%2;font-weight:%3;text-decoration:none;'>%4</a>")
+				.arg(parts.at(i).first)
+				.arg(color, weight, parts.at(i).second.toHtmlEscaped());
+		}
+		breadcrumbLabel->setText(htmlParts.join("<span style='color:#b8c0cf;'> / </span>"));
+		backFolderBtn->setEnabled(*currentFolderId > 0);
+	};
+
+	auto refreshFileTable = std::make_shared<std::function<void()>>();
+
+	auto addFolderRow = [fileTable, folderService, currentFolderId, refreshFileTable, makeActionButton, makeMoreButton, showTodoMenuMessage](const FolderInfo& info) {
 		const int row = fileTable->rowCount();
 		fileTable->insertRow(row);
-		fileTable->setRowHeight(row, 48);
+		fileTable->setRowHeight(row, 56);
 
-		auto* nameItem = new QTableWidgetItem(info.fileName());
-		nameItem->setToolTip(info.absoluteFilePath());
+		auto* nameItem = new QTableWidgetItem(info.name);
+		nameItem->setIcon(makeLineIcon(LineIcon::Folder));
+		nameItem->setData(Qt::UserRole, info.folderId);
+		nameItem->setData(Qt::UserRole + 1, "folder");
+		nameItem->setData(Qt::UserRole + 2, info.localPath);
 		fileTable->setItem(row, 0, nameItem);
-		fileTable->setItem(row, 1, new QTableWidgetItem(formatFileSize(info.size())));
-		fileTable->setItem(row, 2, new QTableWidgetItem(info.suffix().isEmpty() ? "文件" : info.suffix().toUpper()));
-		fileTable->setItem(row, 3, new QTableWidgetItem("本地"));
+		fileTable->setItem(row, 1, new QTableWidgetItem("-"));
+		fileTable->setItem(row, 2, new QTableWidgetItem("文件夹"));
+		fileTable->setItem(row, 3, new QTableWidgetItem("本地目录"));
+		fileTable->setItem(row, 4, new QTableWidgetItem(info.updatedAt.isValid() ? info.updatedAt.toString("yyyy-MM-dd HH:mm") : "-"));
 
 		QWidget* actionWidget = new QWidget(fileTable);
 		QHBoxLayout* actionLayout = new QHBoxLayout(actionWidget);
 		actionLayout->setContentsMargins(0, 0, 0, 0);
 		actionLayout->setSpacing(8);
 
-		QPushButton* uploadAction = new QPushButton("上传", actionWidget);
-		uploadAction->setEnabled(false);
-		QPushButton* deleteAction = new QPushButton("删除", actionWidget);
-		const QString actionStyle =
-			"QPushButton { background: transparent; border: none; color: #1677ff; padding: 4px 6px; }"
-			"QPushButton:disabled { color: #bfbfbf; }"
-			"QPushButton:hover:enabled { color: #0958d9; }";
-		uploadAction->setStyleSheet(actionStyle);
-		deleteAction->setStyleSheet(actionStyle);
-		uploadAction->setCursor(Qt::PointingHandCursor);
-		deleteAction->setCursor(Qt::PointingHandCursor);
+		QPushButton* deleteAction = makeActionButton(LineIcon::Trash, "删除", actionWidget);
+		QPushButton* moreAction = makeMoreButton(actionWidget);
 
-		actionLayout->addWidget(uploadAction);
 		actionLayout->addWidget(deleteAction);
+		actionLayout->addWidget(moreAction);
 		actionLayout->addStretch();
-		fileTable->setCellWidget(row, 4, actionWidget);
+		fileTable->setCellWidget(row, 5, actionWidget);
 
-		QObject::connect(deleteAction, &QPushButton::clicked, fileTable, [fileTable, actionWidget]() {
+		auto renameFolder = [fileTable, actionWidget, folderService, refreshFileTable]() {
+			const int row = fileTable->indexAt(actionWidget->pos()).row();
+			if (row < 0) {
+				return;
+			}
+
+			const int folderId = fileTable->item(row, 0)->data(Qt::UserRole).toInt();
+			const QString oldName = fileTable->item(row, 0)->text();
+			bool ok = false;
+			const QString newName = QInputDialog::getText(fileTable, "重命名文件夹", "文件夹名称：", QLineEdit::Normal, oldName, &ok).trimmed();
+			if (!ok || newName.isEmpty() || newName == oldName) {
+				return;
+			}
+
+			if (folderService->renameFolder(AuthService::currentUserId(), folderId, newName)) {
+				(*refreshFileTable)();
+				AntMessageManager::instance()->showMessage(AntMessage::Success, "文件夹已重命名");
+			}
+			else {
+				AntMessageManager::instance()->showMessage(AntMessage::Error, "重命名失败，请检查是否重名");
+			}
+		};
+
+		auto deleteFolder = [fileTable, actionWidget, folderService]() {
 			const int rowToRemove = fileTable->indexAt(actionWidget->pos()).row();
-			if (rowToRemove >= 0) {
+			if (rowToRemove < 0) {
+				return;
+			}
+
+			const int folderId = fileTable->item(rowToRemove, 0)->data(Qt::UserRole).toInt();
+			if (folderService->trashFolder(AuthService::currentUserId(), folderId)) {
 				fileTable->removeRow(rowToRemove);
+				AntMessageManager::instance()->showMessage(AntMessage::Success, "文件夹已移入回收站");
+			}
+			else {
+				AntMessageManager::instance()->showMessage(AntMessage::Error, "删除文件夹失败");
+			}
+		};
+
+		QObject::connect(deleteAction, &QPushButton::clicked, fileTable, deleteFolder);
+
+		QObject::connect(moreAction, &QPushButton::clicked, fileTable, [fileTable, actionWidget, moreAction, renameFolder, showTodoMenuMessage]() {
+			QMenu menu(moreAction);
+			menu.setStyleSheet(
+				"QMenu { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }"
+				"QMenu::item { min-width: 132px; padding: 8px 18px; color: #1f1f1f; border-radius: 4px; }"
+				"QMenu::item:selected { background: #eaf3ff; color: #1677ff; }"
+			);
+			QAction* moveAction = menu.addAction("移动到");
+			QAction* copyAction = menu.addAction("复制到");
+			QAction* renameAction = menu.addAction("重命名");
+			QAction* revealAction = menu.addAction("在文件管理器中显示");
+			menu.addSeparator();
+			QAction* newFolderAction = menu.addAction("新建文件夹");
+			QAction* detailAction = menu.addAction("详细信息");
+			QAction* selectedAction = menu.exec(moreAction->mapToGlobal(QPoint(0, moreAction->height())));
+			if (selectedAction == renameAction) {
+				renameFolder();
+			}
+			else if (selectedAction == revealAction) {
+				const int row = fileTable->indexAt(actionWidget->pos()).row();
+				if (row < 0 || !fileTable->item(row, 0)) {
+					return;
+				}
+				const QString folderPath = fileTable->item(row, 0)->data(Qt::UserRole + 2).toString();
+				if (!revealInFileManager(folderPath)) {
+					AntMessageManager::instance()->showMessage(AntMessage::Warning, "无法定位文件夹，可能是软件内新建目录或原目录已被移动");
+				}
+			}
+			else if (selectedAction == moveAction || selectedAction == copyAction || selectedAction == newFolderAction || selectedAction == detailAction) {
+				showTodoMenuMessage(selectedAction->text());
 			}
 		});
 	};
 
-	QObject::connect(addFileBtn, &QPushButton::clicked, this, [this, addFileRow]() {
-		const QString filePath = QFileDialog::getOpenFileName(this, "选择文件");
-		if (filePath.isEmpty()) {
+	auto addFileRow = [fileTable, fileService, currentFolderId, refreshFileTable, chooseTargetFolder, makeActionButton, makeMoreButton, showTodoMenuMessage](const LocalFileInfo& info) {
+		const int row = fileTable->rowCount();
+		fileTable->insertRow(row);
+		fileTable->setRowHeight(row, 56);
+
+		auto* nameItem = new QTableWidgetItem(info.fileName);
+		nameItem->setIcon(makeLineIcon(LineIcon::File));
+		nameItem->setData(Qt::UserRole, info.fileId);
+		nameItem->setData(Qt::UserRole + 1, "file");
+		nameItem->setData(Qt::UserRole + 2, info.filePath);
+		fileTable->setItem(row, 0, nameItem);
+		fileTable->setItem(row, 1, new QTableWidgetItem(formatFileSize(info.fileSize)));
+		fileTable->setItem(row, 2, new QTableWidgetItem(info.extension.isEmpty() ? "文件" : info.extension.toUpper()));
+		fileTable->setItem(row, 3, new QTableWidgetItem(info.isBackedUp ? "已备份" : "仅路径"));
+		fileTable->setItem(row, 4, new QTableWidgetItem(info.modifiedAt.isValid() ? info.modifiedAt.toString("yyyy-MM-dd HH:mm") : "-"));
+
+		QWidget* actionWidget = new QWidget(fileTable);
+		QHBoxLayout* actionLayout = new QHBoxLayout(actionWidget);
+		actionLayout->setContentsMargins(0, 0, 0, 0);
+		actionLayout->setSpacing(8);
+
+		QPushButton* versionAction = makeActionButton(LineIcon::Refresh, "更新版本", actionWidget);
+		QPushButton* deleteAction = makeActionButton(LineIcon::Trash, "删除", actionWidget);
+		QPushButton* moreAction = makeMoreButton(actionWidget);
+
+		actionLayout->addWidget(versionAction);
+		actionLayout->addWidget(deleteAction);
+		actionLayout->addWidget(moreAction);
+		actionLayout->addStretch();
+		fileTable->setCellWidget(row, 5, actionWidget);
+
+		auto deleteFile = [fileTable, actionWidget, fileService]() {
+			const int rowToRemove = fileTable->indexAt(actionWidget->pos()).row();
+			if (rowToRemove < 0) {
+				return;
+			}
+
+			const int fileId = fileTable->item(rowToRemove, 0)->data(Qt::UserRole).toInt();
+			if (fileService->trashFile(AuthService::currentUserId(), fileId)) {
+				fileTable->removeRow(rowToRemove);
+				AntMessageManager::instance()->showMessage(AntMessage::Success, "文件已移入回收站");
+			}
+			else {
+				AntMessageManager::instance()->showMessage(AntMessage::Error, "删除文件失败");
+			}
+		};
+
+		QObject::connect(deleteAction, &QPushButton::clicked, fileTable, deleteFile);
+
+		QObject::connect(versionAction, &QPushButton::clicked, fileTable, [fileTable, actionWidget, fileService]() {
+			if (!AuthService::isLoggedIn()) {
+				AntMessageManager::instance()->showMessage(AntMessage::Warning, "请先登录后再更新版本");
+				return;
+			}
+
+			const int row = fileTable->indexAt(actionWidget->pos()).row();
+			if (row < 0) {
+				return;
+			}
+
+			const int fileId = fileTable->item(row, 0)->data(Qt::UserRole).toInt();
+			const QString filePath = QFileDialog::getOpenFileName(fileTable, "选择新版本文件");
+			if (filePath.isEmpty()) {
+				return;
+			}
+
+			if (fileService->createNewVersion(AuthService::currentUserId(), fileId, filePath, "用户手动上传新版本", FileService::backupOnAddEnabled())) {
+				QFileInfo updatedInfo(filePath);
+				fileTable->item(row, 0)->setText(updatedInfo.fileName());
+				fileTable->item(row, 1)->setText(formatFileSize(updatedInfo.size()));
+				fileTable->item(row, 2)->setText(updatedInfo.suffix().isEmpty() ? "文件" : updatedInfo.suffix().toUpper());
+				fileTable->item(row, 3)->setText(FileService::backupOnAddEnabled() ? "已备份" : "仅路径");
+				fileTable->item(row, 4)->setText(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm"));
+				AntMessageManager::instance()->showMessage(AntMessage::Success, "新版本已保存");
+			}
+			else {
+				AntMessageManager::instance()->showMessage(AntMessage::Error, "保存新版本失败");
+			}
+		});
+
+		QObject::connect(moreAction, &QPushButton::clicked, fileTable, [fileTable, actionWidget, moreAction, fileService, currentFolderId, refreshFileTable, chooseTargetFolder, showTodoMenuMessage]() {
+			QMenu menu(moreAction);
+			menu.setStyleSheet(
+				"QMenu { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }"
+				"QMenu::item { min-width: 132px; padding: 8px 18px; color: #1f1f1f; border-radius: 4px; }"
+				"QMenu::item:selected { background: #eaf3ff; color: #1677ff; }"
+			);
+			QAction* moveAction = menu.addAction("移动到");
+			QAction* copyAction = menu.addAction("复制到");
+			QAction* renameAction = menu.addAction("重命名");
+			QAction* historyAction = menu.addAction("查看历史版本");
+			QAction* revealAction = menu.addAction("在文件管理器中显示");
+			menu.addSeparator();
+			QAction* detailAction = menu.addAction("详细信息");
+			QAction* selectedAction = menu.exec(moreAction->mapToGlobal(QPoint(0, moreAction->height())));
+			if (!selectedAction) {
+				return;
+			}
+
+			const int row = fileTable->indexAt(actionWidget->pos()).row();
+			if (row < 0 || !fileTable->item(row, 0)) {
+				return;
+			}
+
+			const int fileId = fileTable->item(row, 0)->data(Qt::UserRole).toInt();
+			if (selectedAction == moveAction) {
+				const int targetFolderId = chooseTargetFolder("移动到", *currentFolderId);
+				if (targetFolderId == *currentFolderId) {
+					return;
+				}
+				if (fileService->moveFile(AuthService::currentUserId(), fileId, targetFolderId)) {
+					(*refreshFileTable)();
+					AntMessageManager::instance()->showMessage(AntMessage::Success, "文件已移动");
+				}
+				else {
+					AntMessageManager::instance()->showMessage(AntMessage::Error, "移动失败，请检查目标位置是否已有同名文件");
+				}
+			}
+			else if (selectedAction == copyAction) {
+				const int targetFolderId = chooseTargetFolder("复制到", *currentFolderId);
+				if (fileService->copyFile(AuthService::currentUserId(), fileId, targetFolderId)) {
+					(*refreshFileTable)();
+					AntMessageManager::instance()->showMessage(AntMessage::Success, "文件已复制");
+				}
+				else {
+					AntMessageManager::instance()->showMessage(AntMessage::Error, "复制失败");
+				}
+			}
+			else if (selectedAction == revealAction) {
+				const QString filePath = fileTable->item(row, 0)->data(Qt::UserRole + 2).toString();
+				if (!revealInFileManager(filePath)) {
+					AntMessageManager::instance()->showMessage(AntMessage::Warning, "无法定位文件，可能已被移动或删除");
+				}
+			}
+			else if (selectedAction == renameAction || selectedAction == historyAction || selectedAction == detailAction) {
+				showTodoMenuMessage(selectedAction->text());
+			}
+		});
+	};
+
+	*refreshFileTable = [fileTable, fileService, folderService, addFolderRow, addFileRow, updateBreadcrumb, currentFolderId]() {
+		fileTable->setRowCount(0);
+		updateBreadcrumb();
+		const QList<FolderInfo> folders = folderService->listFolders(AuthService::currentUserId(), *currentFolderId);
+		for (const FolderInfo& folder : folders) {
+			addFolderRow(folder);
+		}
+		const QList<LocalFileInfo> files = fileService->listFiles(AuthService::currentUserId(), *currentFolderId);
+		for (const LocalFileInfo& file : files) {
+			addFileRow(file);
+		}
+	};
+	if (AuthService::isLoggedIn()) {
+		(*refreshFileTable)();
+	}
+
+	fileTable->moveFileToFolder = [fileService, refreshFileTable](int fileId, int targetFolderId) {
+		if (!AuthService::isLoggedIn()) {
+			AntMessageManager::instance()->showMessage(AntMessage::Warning, "请先登录后再移动文件");
 			return;
 		}
-		QFileInfo info(filePath);
-		if (info.exists() && info.isFile()) {
-			addFileRow(info);
+
+		if (fileService->moveFile(AuthService::currentUserId(), fileId, targetFolderId)) {
+			(*refreshFileTable)();
+			AntMessageManager::instance()->showMessage(AntMessage::Success, "文件已移动到文件夹");
+		}
+		else {
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "移动失败，请检查目标位置是否已有同名文件");
+		}
+	};
+
+	auto createFolderFromUi = [this, folderService, currentFolderId, refreshFileTable]() {
+		if (!AuthService::isLoggedIn()) {
+			AntMessageManager::instance()->showMessage(AntMessage::Warning, "请先登录后再新建文件夹");
+			return;
+		}
+
+		bool ok = false;
+		const QString folderName = QInputDialog::getText(this, "新建文件夹", "文件夹名称：", QLineEdit::Normal, "", &ok).trimmed();
+		if (!ok || folderName.isEmpty()) {
+			return;
+		}
+
+		if (folderService->createFolder(AuthService::currentUserId(), *currentFolderId, folderName)) {
+			(*refreshFileTable)();
+			AntMessageManager::instance()->showMessage(AntMessage::Success, "文件夹已创建");
+		}
+		else {
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "创建失败，请检查是否重名");
+		}
+	};
+
+	auto createEmptyFileFromUi = [this, fileService, currentFolderId, refreshFileTable]() {
+		if (!AuthService::isLoggedIn()) {
+			AntMessageManager::instance()->showMessage(AntMessage::Warning, "请先登录后再新建文件");
+			return;
+		}
+
+		bool ok = false;
+		QString fileName = QInputDialog::getText(this, "新建文件", "文件名：", QLineEdit::Normal, "新建文本文档.txt", &ok).trimmed();
+		if (!ok || fileName.isEmpty()) {
+			return;
+		}
+
+		fileName = safeLocalName(fileName);
+		const QString tempRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/FMS/new-files";
+		QDir().mkpath(tempRoot);
+		QString tempPath = QDir(tempRoot).filePath(fileName);
+		if (QFile::exists(tempPath)) {
+			QFileInfo info(fileName);
+			tempPath = QDir(tempRoot).filePath(QString("%1_%2.%3")
+												  .arg(info.completeBaseName())
+												  .arg(QDateTime::currentDateTime().toString("yyyyMMddHHmmss"))
+												  .arg(info.suffix().isEmpty() ? "txt" : info.suffix()));
+		}
+
+		QFile file(tempPath);
+		if (!file.open(QIODevice::WriteOnly)) {
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "新建文件失败，请检查临时目录权限");
+			return;
+		}
+		file.close();
+
+		if (fileService->addLocalFile(AuthService::currentUserId(), *currentFolderId, tempPath, FileService::backupOnAddEnabled())) {
+			(*refreshFileTable)();
+			AntMessageManager::instance()->showMessage(AntMessage::Success, "文件已创建");
+		}
+		else {
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "新建文件保存失败");
+		}
+	};
+
+	auto importFolderTree = [fileService, folderService](int ownerId, int parentFolderId, const QString& folderPath, int& folderCount, int& fileCount, int& failCount) {
+		std::function<void(int, const QDir&)> importDir = [&](int targetParentId, const QDir& sourceDir) {
+			int createdFolderId = -1;
+			if (!folderService->createFolder(ownerId, targetParentId, sourceDir.dirName(), &createdFolderId, sourceDir.absolutePath())) {
+				++failCount;
+				return;
+			}
+			++folderCount;
+
+			const QFileInfoList childDirs = sourceDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
+			for (const QFileInfo& childDir : childDirs) {
+				importDir(createdFolderId, QDir(childDir.absoluteFilePath()));
+			}
+
+			const QFileInfoList childFiles = sourceDir.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase);
+			for (const QFileInfo& childFile : childFiles) {
+				if (fileService->addLocalFile(ownerId, createdFolderId, childFile.absoluteFilePath(), FileService::backupOnAddEnabled())) {
+					++fileCount;
+				}
+				else {
+					++failCount;
+				}
+			}
+		};
+
+		QDir rootDir(folderPath);
+		if (!rootDir.exists()) {
+			++failCount;
+			return;
+		}
+		importDir(parentFolderId, rootDir);
+	};
+
+	connect(backFolderBtn, &QPushButton::clicked, this, [folderService, currentFolderId, refreshFileTable]() {
+		if (*currentFolderId <= 0) {
+			return;
+		}
+
+		const QList<FolderInfo> path = folderService->folderPath(AuthService::currentUserId(), *currentFolderId);
+		*currentFolderId = path.isEmpty() ? -1 : path.last().parentId;
+		(*refreshFileTable)();
+	});
+
+	connect(breadcrumbLabel, &QLabel::linkActivated, this, [currentFolderId, refreshFileTable](const QString& link) {
+		bool ok = false;
+		const int targetFolderId = link.toInt(&ok);
+		if (!ok || targetFolderId == *currentFolderId) {
+			return;
+		}
+
+		*currentFolderId = targetFolderId;
+		(*refreshFileTable)();
+	});
+
+	connect(newFileBtn, &QPushButton::clicked, this, createEmptyFileFromUi);
+	connect(newFolderBtn, &QPushButton::clicked, this, createFolderFromUi);
+
+	connect(fileTable, &QTableWidget::cellClicked, this, [fileTable, currentFolderId, refreshFileTable](int row, int column) {
+		if (column == 5) {
+			return;
+		}
+		if (row < 0 || !fileTable->item(row, 0)) {
+			return;
+		}
+
+		const QString itemType = fileTable->item(row, 0)->data(Qt::UserRole + 1).toString();
+		if (itemType == "folder") {
+			*currentFolderId = fileTable->item(row, 0)->data(Qt::UserRole).toInt();
+			(*refreshFileTable)();
+			return;
+		}
+
+		if (itemType == "file") {
+			const QString filePath = fileTable->item(row, 0)->data(Qt::UserRole + 2).toString();
+			if (filePath.isEmpty() || !QFileInfo::exists(filePath)) {
+				AntMessageManager::instance()->showMessage(AntMessage::Warning, "文件路径不存在，可能已被移动或删除");
+				return;
+			}
+			if (!QDesktopServices::openUrl(QUrl::fromLocalFile(filePath))) {
+				AntMessageManager::instance()->showMessage(AntMessage::Error, "无法打开文件，请检查系统默认打开方式");
+			}
 		}
 	});
 
+	QVBoxLayout* settingsLayout = new QVBoxLayout(settingsPage);
+	settingsLayout->setContentsMargins(28, 22, 28, 28);
+	settingsLayout->setSpacing(18);
+
+	QLabel* settingsTitle = new QLabel("文件设置", settingsPage);
+	QFont settingsTitleFont;
+	settingsTitleFont.setPointSizeF(15);
+	settingsTitleFont.setBold(true);
+	settingsTitle->setFont(settingsTitleFont);
+	settingsTitle->setStyleSheet("color: #1f1f1f;");
+
+	QWidget* backupSettingRow = new QWidget(settingsPage);
+	QHBoxLayout* backupSettingLayout = new QHBoxLayout(backupSettingRow);
+	backupSettingLayout->setContentsMargins(0, 0, 0, 0);
+	backupSettingLayout->setSpacing(12);
+
+	QVBoxLayout* backupTextLayout = new QVBoxLayout();
+	backupTextLayout->setContentsMargins(0, 0, 0, 0);
+	backupTextLayout->setSpacing(4);
+	QLabel* backupTitle = new QLabel("添加文件时自动备份", backupSettingRow);
+	QFont backupTitleFont;
+	backupTitleFont.setPointSizeF(12.5);
+	backupTitleFont.setBold(true);
+	backupTitle->setFont(backupTitleFont);
+	backupTitle->setStyleSheet("color: #1f1f1f;");
+	QLabel* backupDesc = new QLabel("开启后会复制一份文件到应用存储目录，关闭后只记录原始路径。", backupSettingRow);
+	backupDesc->setStyleSheet("color: #6b7280; font-size: 12px;");
+	backupTextLayout->addWidget(backupTitle);
+	backupTextLayout->addWidget(backupDesc);
+
+	AntToggleButton* backupToggle = new AntToggleButton(QSize(58, 30), backupSettingRow);
+	backupToggle->setShowText(true);
+	backupToggle->setChecked(FileService::backupOnAddEnabled());
+	backupSettingLayout->addLayout(backupTextLayout);
+	backupSettingLayout->addStretch();
+	backupSettingLayout->addWidget(backupToggle);
+	connect(backupToggle, &AntToggleButton::toggled, this, [](bool checked) {
+		FileService::setBackupOnAddEnabled(checked);
+		AntMessageManager::instance()->showMessage(
+			AntMessage::Success,
+			checked ? "已开启文件备份模式" : "已切换为仅保存路径模式"
+		);
+	});
+
+	settingsLayout->addWidget(settingsTitle);
+	settingsLayout->addWidget(backupSettingRow);
+
+	QWidget* backupPathRow = new QWidget(settingsPage);
+	QHBoxLayout* backupPathLayout = new QHBoxLayout(backupPathRow);
+	backupPathLayout->setContentsMargins(0, 0, 0, 0);
+	backupPathLayout->setSpacing(10);
+	QLabel* backupPathTitle = new QLabel("备份保存位置", backupPathRow);
+	backupPathTitle->setMinimumWidth(110);
+	backupPathTitle->setStyleSheet("color: #1f1f1f; font-size: 13px;");
+	QLineEdit* backupPathEdit = new QLineEdit(FileService::backupRootPath(), backupPathRow);
+	backupPathEdit->setPlaceholderText("输入或选择备份目录");
+	backupPathEdit->setClearButtonEnabled(true);
+	backupPathEdit->setContextMenuPolicy(Qt::CustomContextMenu);
+	backupPathEdit->setStyleSheet(
+		"QLineEdit { background: #ffffff; border: 1px solid #d9d9d9; border-radius: 6px; padding: 7px 10px; color: #374151; }"
+		"QLineEdit:focus { border-color: #1677ff; }"
+	);
+	QPushButton* chooseBackupPathBtn = new QPushButton("选择目录", backupPathRow);
+	chooseBackupPathBtn->setCursor(Qt::PointingHandCursor);
+	chooseBackupPathBtn->setStyleSheet(
+		"QPushButton { color: #1677ff; background: #ffffff; border: 1px solid #1677ff; border-radius: 6px; padding: 7px 12px; }"
+		"QPushButton:hover { color: #0958d9; border-color: #0958d9; }"
+	);
+	backupPathLayout->addWidget(backupPathTitle);
+	backupPathLayout->addWidget(backupPathEdit, 1);
+	backupPathLayout->addWidget(chooseBackupPathBtn);
+
+	auto saveBackupPath = [backupPathEdit]() {
+		const QString inputPath = backupPathEdit->text().trimmed();
+		if (inputPath.isEmpty()) {
+			backupPathEdit->setText(FileService::backupRootPath());
+			AntMessageManager::instance()->showMessage(AntMessage::Warning, "备份路径不能为空");
+			return;
+		}
+		if (QDir::fromNativeSeparators(inputPath) == FileService::backupRootPath()) {
+			return;
+		}
+
+		if (!FileService::setBackupRootPath(inputPath)) {
+			backupPathEdit->setText(FileService::backupRootPath());
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "备份路径保存失败，请检查目录权限");
+			return;
+		}
+
+		backupPathEdit->setText(FileService::backupRootPath());
+		AntMessageManager::instance()->showMessage(AntMessage::Success, "备份路径已更新");
+	};
+
+	connect(backupPathEdit, &QLineEdit::editingFinished, this, saveBackupPath);
+	connect(backupPathEdit, &QLineEdit::customContextMenuRequested, this, [backupPathEdit](const QPoint& pos) {
+		QMenu menu(backupPathEdit);
+		menu.setStyleSheet(
+			"QMenu { background: #ffffff; border: 1px solid #d9d9d9; border-radius: 6px; padding: 4px; }"
+			"QMenu::item { padding: 6px 22px; color: #1f1f1f; }"
+			"QMenu::item:selected { background: #eaf3ff; color: #1677ff; }"
+			"QMenu::item:disabled { color: #bfbfbf; }"
+		);
+
+		QAction* cutAction = menu.addAction("剪切");
+		QAction* copyAction = menu.addAction("复制");
+		QAction* pasteAction = menu.addAction("粘贴");
+		menu.addSeparator();
+		QAction* selectAllAction = menu.addAction("全选");
+		cutAction->setEnabled(backupPathEdit->hasSelectedText());
+		copyAction->setEnabled(backupPathEdit->hasSelectedText());
+		pasteAction->setEnabled(true);
+
+		const QAction* selectedAction = menu.exec(backupPathEdit->mapToGlobal(pos));
+		if (selectedAction == cutAction) {
+			backupPathEdit->cut();
+		}
+		else if (selectedAction == copyAction) {
+			backupPathEdit->copy();
+		}
+		else if (selectedAction == pasteAction) {
+			backupPathEdit->paste();
+		}
+		else if (selectedAction == selectAllAction) {
+			backupPathEdit->selectAll();
+		}
+	});
+
+	connect(chooseBackupPathBtn, &QPushButton::clicked, this, [backupPathEdit]() {
+		const QString selectedDir = QFileDialog::getExistingDirectory(nullptr, "选择备份保存目录", backupPathEdit->text());
+		if (selectedDir.isEmpty()) {
+			return;
+		}
+
+		if (!FileService::setBackupRootPath(selectedDir)) {
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "备份路径保存失败，请检查目录权限");
+			return;
+		}
+		backupPathEdit->setText(FileService::backupRootPath());
+		AntMessageManager::instance()->showMessage(AntMessage::Success, "备份路径已更新");
+	});
+
+	settingsLayout->addWidget(backupPathRow);
+	settingsLayout->addStretch();
+
+	QObject::connect(addFileBtn, &QPushButton::clicked, this, [this, addFileBtn, fileService, currentFolderId, refreshFileTable, importFolderTree]() {
+		if (!AuthService::isLoggedIn()) {
+			AntMessageManager::instance()->showMessage(AntMessage::Warning, "请先登录后再添加内容");
+			return;
+		}
+
+		QMenu menu(addFileBtn);
+		menu.setStyleSheet(
+			"QMenu { background: #ffffff; border: 1px solid #d9d9d9; border-radius: 6px; padding: 6px; }"
+			"QMenu::item { min-width: 132px; padding: 8px 18px; color: #1f1f1f; border-radius: 4px; }"
+			"QMenu::item:selected { background: #eaf3ff; color: #1677ff; }"
+		);
+		QAction* addFilesAction = menu.addAction("添加文件");
+		QAction* addFolderAction = menu.addAction("添加文件夹");
+		const QAction* selectedAction = menu.exec(addFileBtn->mapToGlobal(QPoint(0, addFileBtn->height())));
+		if (!selectedAction) {
+			return;
+		}
+
+		int folderCount = 0;
+		int fileCount = 0;
+		int failCount = 0;
+
+		if (selectedAction == addFilesAction) {
+			const QStringList filePaths = QFileDialog::getOpenFileNames(this, "选择文件");
+			if (filePaths.isEmpty()) {
+				return;
+			}
+
+			for (const QString& filePath : filePaths) {
+				if (fileService->addLocalFile(AuthService::currentUserId(), *currentFolderId, filePath, FileService::backupOnAddEnabled())) {
+					++fileCount;
+				}
+				else {
+					++failCount;
+				}
+			}
+		}
+		else if (selectedAction == addFolderAction) {
+			const QString folderPath = QFileDialog::getExistingDirectory(this, "选择文件夹");
+			if (folderPath.isEmpty()) {
+				return;
+			}
+			if (!confirmLargeFolderImport(this, folderPath)) {
+				return;
+			}
+			importFolderTree(AuthService::currentUserId(), *currentFolderId, folderPath, folderCount, fileCount, failCount);
+		}
+
+		(*refreshFileTable)();
+		if (failCount == 0) {
+			AntMessageManager::instance()->showMessage(AntMessage::Success, QString("已添加 %1 个文件夹，%2 个文件").arg(folderCount).arg(fileCount));
+		}
+		else if (folderCount > 0 || fileCount > 0) {
+			AntMessageManager::instance()->showMessage(AntMessage::Warning, QString("已添加 %1 个文件夹，%2 个文件，%3 项失败").arg(folderCount).arg(fileCount).arg(failCount));
+		}
+		else {
+			AntMessageManager::instance()->showMessage(AntMessage::Error, "添加失败，请检查是否重名、无权限或文件不可读");
+		}
+	});
 	homeLayout->addLayout(toolbarLayout);
+	homeLayout->addWidget(breadcrumbLabel);
 	homeLayout->addWidget(fileTable, 1);
 
 	stackedWidget->addWidget(homePage);
 	stackedWidget->addWidget(settingsPage);
 	stackedWidget->addWidget(aboutPage);
-	stackedWidget->setCurrentIndex(0);				// 默认显示首页
-	// 导航按钮
-	const int naviWidth = ui.navi_widget->width();  // 动态获取导航栏宽度
-	const double iconSizeRatio = 0.56;				// 图标占按钮的比例
+	stackedWidget->setCurrentIndex(0);
+	// 创建左侧导航按钮。
+	const int naviWidth = ui.navi_widget->width();
+	const double iconSizeRatio = 0.56;
 	const int buttonSize = naviWidth;
 	const int iconSize = static_cast<int>(buttonSize * iconSizeRatio);
 	CustomToolButton* btnHome = new CustomToolButton(QSize(iconSize, iconSize), ui.navi_widget);
 	CustomToolButton* btnSettings = new CustomToolButton(QSize(iconSize, iconSize), ui.navi_widget);
 	CustomToolButton* btnAbout = new CustomToolButton(QSize(iconSize, iconSize), ui.navi_widget);
-	// 设置导航按钮样式
+	// 设置导航按钮图标和页面映射关系。
 	auto* ins = DesignSystem::instance();
 	buttonInfos = {
 	{btnHome,ins->btnHomeIconPath(), ins->btnHomeActiveIconPath(), homePage},
 	{btnSettings,ins->btnSettingsIconPath() ,ins->btnSettingsActiveIconPath() , settingsPage},
 	{btnAbout,ins->btnAboutIconPath() , ins->btnAboutActiveIconPath(), aboutPage}
 	};
-	// 设置统一样式和连接信号
-	buttonInfos[stackedWidget->currentIndex()].button->setBtnChecked(true); // 设置当前页面按钮为选中状态
+	buttonInfos[stackedWidget->currentIndex()].button->setBtnChecked(true);
 	for (const ButtonInfo& info : buttonInfos)
 	{
 		CustomToolButton* btn = info.button;
 		btn->setSvgIcons(info.normalIcon, info.activeIcon);
 		btn->setFixedSize(QSize(naviWidth - 4, naviWidth - 4));
-		// 连接信号，捕获图标路径
 		connect(btn, &QToolButton::clicked, [btn, btnHome, contentLay, this]()
 			{
 				ui.titleBar->setFixedHeight(m_titleBarHeight);
 
-				// 禁用所有按钮，防止视觉反馈+误点
+				// 页面动画期间临时禁用导航按钮，避免重复切换。
 				for (ButtonInfo& infos : buttonInfos)
 					infos.button->setEnabled(false);
 
 				if (stackedWidget->isAnimationRunning()) return;
 
-				// 更新UI
+				// 更新当前选中的导航按钮和目标页面。
 				QWidget* nextPage = nullptr;
 				btn->setBtnChecked(true);
 				for (ButtonInfo& infos : buttonInfos)
@@ -339,7 +1279,6 @@ AppShell::AppShell(QWidget* parent)
 						infos.button->setBtnChecked(false);
 				}
 
-				// 页面切换 + 结束后恢复按钮
 				stackedWidget->slideFromBottomToTop(nextPage, 250, [this]()
 					{
 						for (ButtonInfo& infos : buttonInfos)
@@ -347,7 +1286,7 @@ AppShell::AppShell(QWidget* parent)
 					});
 			});
 	}
-	// 主题切换按钮
+	// 创建主题切换按钮。
 	QPushButton* themeBtn = new QPushButton(ui.navi_widget);
 	themeBtn->setStyleSheet("QPushButton { background-color: transparent; border: none; }");
 	themeBtn->setFixedSize(naviWidth * 0.38, naviWidth * 0.38);
@@ -355,12 +1294,12 @@ AppShell::AppShell(QWidget* parent)
 	themeBtn->setIconSize(themeBtn->size());
 	connect(themeBtn, &QPushButton::clicked, this, [this, themeSwitcher, themeBtn]()
 		{
-			// 获取按钮中心点的全局坐标
+			// 用按钮中心点作为主题切换动画的起点。
 			themeSwitcher->startSwitchTheme(this->grab(), themeBtn, themeBtn->mapToGlobal(themeBtn->rect().center()));
 		});
 	connect(this, &AppShell::resized, themeSwitcher, &ThemeSwitcher::resizeByMainWindow);
 
-	//  导航栏布局
+	// 左侧导航栏布局。
 	naviLay->addSpacing(28);
 	naviLay->addWidget(avatar, 0, Qt::AlignHCenter);
 	naviLay->addSpacing(16);
@@ -371,32 +1310,33 @@ AppShell::AppShell(QWidget* parent)
 	naviLay->addWidget(themeBtn, 0, Qt::AlignHCenter);
 	naviLay->addSpacing(70);
 
-	// 初始化全局管理器
-	AntMessageManager::instance();	// 全局消息
-	AntTooltipManager::instance();	// 全局提示
+	AntMessageManager::instance();
+	AntTooltipManager::instance();
 
-	// 初始化通知管理器
 	NotificationManager::instance()->getMainWindow(ui.main_widget);
 
-	// 调整消息框位置
 	connect(this, &AppShell::resized, this, [=](int w, int h)
 		{
 			NotificationManager::instance()->relayoutNotifications(w, h);
 		});
 
-	// 对话框
-	DialogViewController* mDialog = new DialogViewController(avatar->loginState(), this);	// 实际登录状态要服务器给予
+	DialogViewController* mDialog = new DialogViewController(AuthService::isLoggedIn(), this);
 	avatar->addDialog(mDialog);
 	connect(mDialog, &DialogViewController::successLogin, avatar, &CircularAvatar::allowLogin);
+	connect(mDialog, &DialogViewController::successLogin, this, [currentFolderId, refreshFileTable](bool loginState) {
+		if (loginState) {
+			*currentFolderId = -1;
+			(*refreshFileTable)();
+		}
+	});
 
-	// 信号连接
+	// 标题栏窗口控制按钮。
 	connect(btnMax, &QToolButton::clicked, this, [this]()
 		{
 #ifdef Q_OS_WIN
-			// 每次使用时重新获取窗口句柄，可以确保你拿到的是当前最新、有效的窗口句柄。避免使用缓存失效的句柄造成崩溃。
 			HWND hwnd = reinterpret_cast<HWND>(winId());
 
-			// 如果当前最大化，点击恢复；否则最大化
+			// 当前最大化时恢复，否则最大化。
 			WINDOWPLACEMENT wp;
 			wp.length = sizeof(WINDOWPLACEMENT);
 			GetWindowPlacement(hwnd, &wp);
@@ -431,7 +1371,6 @@ AppShell::AppShell(QWidget* parent)
 
 	connect(btnClose, &QToolButton::clicked, this, [this]()
 		{
-			// 自定义标题栏没有系统关闭按钮，点击这里时显式关闭主窗口。
 			close();
 		});
 
@@ -442,7 +1381,7 @@ AppShell::AppShell(QWidget* parent)
 			DesignSystem::instance()->getDarkMask()->resize(w, h);
 		});
 
-	// 主题切换
+	// 主题变化后同步刷新主要控件样式。
 	connect(ins, &DesignSystem::themeChanged, this, [=]()
 		{
 			ui.main_widget->setStyleSheet(StyleSheet::mainQss(DesignSystem::instance()->backgroundColor()));
@@ -464,24 +1403,20 @@ AppShell::AppShell(QWidget* parent)
 		});
 }
 
-// QWidget 子对象都由 Qt 父子关系自动释放，这里保留析构函数方便以后补充清理逻辑。
 AppShell::~AppShell()
 {
 }
 
-// 窗口大小变化时，同步通知弹窗、遮罩和设计系统更新布局尺寸。
 void AppShell::resizeEvent(QResizeEvent* event)
 {
 	QWidget::resizeEvent(event);
 
-	// 调整对话框尺寸
 	emit resized(width(), height());
 
-	// 保存内容区域尺寸
+	// 保存内容区尺寸，供遮罩和动效组件使用。
 	DesignSystem::instance()->setContentSize(QSize(width() - m_naviWidth, height()));
 }
 
-// Windows 无边框窗口的原生事件处理：负责拖拽、缩放、最大化双击和标题栏命中测试。
 bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
 {
 #ifdef Q_OS_WIN
@@ -489,7 +1424,7 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 
 	switch (msg->message) {
 	case WM_NCCALCSIZE: {
-		// 去掉非客户区，让客户区占满整个窗口（无边框）
+		// 去掉系统非客户区，让自定义窗口内容占满窗口。
 		if (msg->wParam) {
 			*result = 0;
 			return true;
@@ -497,11 +1432,10 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 		break;
 	}
 	case WM_NCLBUTTONDBLCLK: {
-		// 如果存在遮罩则响应遮罩，禁止系统事件（双击最大化）
 		if (DesignSystem::instance()->getTransparentMask()->isVisible() ||
 			DesignSystem::instance()->getDarkMask()->isVisible())
 		{
-			*result = 0;  // 阻止系统响应双击
+			*result = 0;
 			return true;
 		}
 		break;
@@ -510,18 +1444,17 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 		if (DesignSystem::instance()->getTransparentMask()->isVisible() ||
 			DesignSystem::instance()->getDarkMask()->isVisible())
 		{
-			*result = HTCLIENT;  // 阻止系统响应拖拽缩放
+			*result = HTCLIENT;
 			return true;
 		}
 
-		// 处理拖拽和缩放区域
-		const LONG borderWidth = 8; // 拖拽缩放边框宽度
+		const LONG borderWidth = 8;
 
-		// 返回的是物理像素
+		// Windows 原生消息返回的是物理像素。
 		RECT winRect;
 		GetWindowRect(HWND(winId()), &winRect);
 
-		// 获取鼠标全局坐标物理像素
+		// 鼠标全局坐标也是物理像素。
 		const LONG x = GET_X_LPARAM(msg->lParam);
 		const LONG y = GET_Y_LPARAM(msg->lParam);
 
@@ -535,73 +1468,66 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 			return true;
 		}
 
-		// 允许缩放的条件（根据窗口最小最大宽高判断）
+		// 根据最小/最大尺寸判断当前方向是否允许缩放。
 		const bool canResizeWidth = minimumWidth() != maximumWidth();
 		const bool canResizeHeight = minimumHeight() != maximumHeight();
 
-		// 左上角
 		if (canResizeWidth && canResizeHeight &&
 			x >= winRect.left && x < winRect.left + borderWidth &&
 			y >= winRect.top && y < winRect.top + borderWidth) {
 			*result = HTTOPLEFT;
 			return true;
 		}
-		// 右上角
 		if (canResizeWidth && canResizeHeight &&
 			x >= winRect.right - borderWidth && x < winRect.right &&
 			y >= winRect.top && y < winRect.top + borderWidth) {
 			*result = HTTOPRIGHT;
 			return true;
 		}
-		// 左下角
 		if (canResizeWidth && canResizeHeight &&
 			x >= winRect.left && x < winRect.left + borderWidth &&
 			y >= winRect.bottom - borderWidth && y < winRect.bottom) {
 			*result = HTBOTTOMLEFT;
 			return true;
 		}
-		// 右下角
 		if (canResizeWidth && canResizeHeight &&
 			x >= winRect.right - borderWidth && x < winRect.right &&
 			y >= winRect.bottom - borderWidth && y < winRect.bottom) {
 			*result = HTBOTTOMRIGHT;
 			return true;
 		}
-		// 左边
+		// 左边。
 		if (canResizeWidth &&
 			x >= winRect.left && x < winRect.left + borderWidth) {
 			*result = HTLEFT;
 			return true;
 		}
-		// 右边
+		// 右边。
 		if (canResizeWidth &&
 			x >= winRect.right - borderWidth && x < winRect.right) {
 			*result = HTRIGHT;
 			return true;
 		}
-		// 上边
+		// 上边。
 		if (canResizeHeight &&
 			y >= winRect.top && y < winRect.top + borderWidth) {
 			*result = HTTOP;
 			return true;
 		}
-		// 下边
+		// 下边。
 		if (canResizeHeight &&
 			y >= winRect.bottom - borderWidth && y < winRect.bottom) {
 			*result = HTBOTTOM;
 			return true;
 		}
-		// 标题栏右侧是搜索框、最小化、最大化、关闭按钮，必须排除出 HTCAPTION。
-		// 否则 Windows 会把这些按钮区域当成拖动标题栏，导致按钮收不到 clicked 信号。
 		int rightBoundary = winRect.right - m_widgetTotalWidthPhysicalPixels;
-		// 设置标题栏拖动区域 只有该区域内才允许拖动窗口
 		if (x > winRect.left + m_titleLeftTotalWidthPhysicalPixels && x < rightBoundary
 			&& y > winRect.top && y < winRect.top + m_titleBarHeightPhysicalPixels)
 		{
 			*result = HTCAPTION;
 			return true;
 		}
-		// 其余地方交给默认处理
+		// 其余区域交给 Qt 默认处理。
 		break;
 	}
 	default:
@@ -611,7 +1537,6 @@ bool AppShell::nativeEvent(const QByteArray& eventType, void* message, qintptr* 
 	return QWidget::nativeEvent(eventType, message, result);
 }
 
-// 窗口首次显示后补回 Windows 标准窗口样式，让无边框窗口仍有系统动画和圆角。
 void AppShell::showEvent(QShowEvent* event)
 {
 	QWidget::showEvent(event);
@@ -622,7 +1547,6 @@ void AppShell::showEvent(QShowEvent* event)
 
 	LONG style = GetWindowLong(m_hwnd, GWL_STYLE);
 
-	// 非客户区被隐藏了 但是他还有标题栏、有边框以及最大化最小化功能的标准窗口从而提供windows原生动画和交互
 	style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 	SetWindowLong(m_hwnd, GWL_STYLE, style);
 
@@ -631,15 +1555,13 @@ void AppShell::showEvent(QShowEvent* event)
 #endif // Q_OS_WIN
 }
 
-// 窗口移动时发出全局坐标，供悬浮层或跟随组件重新定位。
 void AppShell::moveEvent(QMoveEvent* event)
 {
 	QWidget::moveEvent(event);
-	// 发送窗口左上角全局坐标
+	// 通知悬浮层当前窗口左上角的全局坐标。
 	emit windowMoved(this->mapToGlobal(QPoint(0, 0)));
 }
 
-// 监听窗口状态变化，切换最大化/还原按钮图标并调整最大化时的边距。
 void AppShell::changeEvent(QEvent* event)
 {
 	if (event->type() == QEvent::WindowStateChange)
@@ -671,12 +1593,12 @@ bool AppShell::eventFilter(QObject* obj, QEvent* event)
 		QHoverEvent* hoverEvent = static_cast<QHoverEvent*>(event);
 		QPoint pos = hoverEvent->position().toPoint();
 		updateCursor(pos);
-		return true; // 表示事件已处理
+		return true;
 	}
 	if (event->type() == QEvent::MouseButtonRelease)
 	{
 		QMouseEvent* me = static_cast<QMouseEvent*>(event);
-		m_isLockCursor = false; // 释放鼠标锁定状态
+		m_isLockCursor = false;
 		return true;
 	}
 
@@ -693,13 +1615,11 @@ void AppShell::mousePressEvent(QMouseEvent* event)
 
 	if (currentEdge != Qt::Edges())
 	{
-		// 鼠标在窗口边缘/角落，启动系统缩放
 		window()->windowHandle()->startSystemResize(currentEdge);
 	}
 	else if (event->pos().x() > rect().left() + m_naviWidth && event->pos().x() < rect().right()
 		&& event->pos().y() > rect().top() && event->pos().y() < m_titleBarHeight)
 	{
-		// 鼠标在标题栏，拖动窗口
 		window()->windowHandle()->startSystemMove();
 	}
 }
@@ -725,18 +1645,16 @@ void AppShell::updateCursor(const QPoint& pos)
 	const bool top = pos.y() < r.top() + edgeWidth;
 	const bool bottom = pos.y() > r.bottom() - edgeWidth;
 
-	// 四角
 	if (top && left)        newEdge = Qt::TopEdge | Qt::LeftEdge;
 	else if (top && right)  newEdge = Qt::TopEdge | Qt::RightEdge;
 	else if (bottom && left) newEdge = Qt::BottomEdge | Qt::LeftEdge;
 	else if (bottom && right) newEdge = Qt::BottomEdge | Qt::RightEdge;
-	// 边
 	else if (top)    newEdge = Qt::TopEdge;
 	else if (bottom) newEdge = Qt::BottomEdge;
 	else if (left)   newEdge = Qt::LeftEdge;
 	else if (right)  newEdge = Qt::RightEdge;
 
-	// 避免重复 setCursor
+	// 避免重复 setCursor。
 	if (newEdge != currentEdge)
 	{
 		currentEdge = newEdge;
@@ -767,3 +1685,5 @@ void AppShell::updateCursor(const QPoint& pos)
 }
 
 #endif
+
+

@@ -75,6 +75,39 @@ bool DatabaseManager::initializeDatabase(const QString& dbName) {
         return false;
     }
 
+    QSqlQuery columnQuery(m_db);
+    bool hasOriginalPath = false;
+    if (columnQuery.exec("PRAGMA table_info(files)")) {
+        while (columnQuery.next()) {
+            if (columnQuery.value("name").toString() == "original_path") {
+                hasOriginalPath = true;
+                break;
+            }
+        }
+    }
+    if (!hasOriginalPath && !executeQuery("ALTER TABLE files ADD COLUMN original_path TEXT")) {
+        return false;
+    }
+    if (!executeQuery("UPDATE files "
+                      "SET original_path = (SELECT storage_path FROM file_versions WHERE id = files.current_version_id) "
+                      "WHERE original_path IS NULL OR original_path = ''")) {
+        return false;
+    }
+
+    QSqlQuery folderColumnQuery(m_db);
+    bool hasFolderLocalPath = false;
+    if (folderColumnQuery.exec("PRAGMA table_info(folders)")) {
+        while (folderColumnQuery.next()) {
+            if (folderColumnQuery.value("name").toString() == "local_path") {
+                hasFolderLocalPath = true;
+                break;
+            }
+        }
+    }
+    if (!hasFolderLocalPath && !executeQuery("ALTER TABLE folders ADD COLUMN local_path TEXT")) {
+        return false;
+    }
+
     qDebug() << "Database initialized";
     return true;
 }

@@ -5,12 +5,15 @@
 #include <QParallelAnimationGroup>
 #include "AntButton.h"
 
+class QLabel;
+
 class UserInfoBubble : public QWidget
 {
 	Q_OBJECT
 public:
 	UserInfoBubble(QWidget* parent);
 	~UserInfoBubble();
+	void refreshUserInfo();
 	void showAnimated(QPoint globalPos);
 	void hideAnimated();
 protected:
@@ -32,4 +35,9 @@ private:
 	bool isHoverAvatar = false;
 	// ant按钮
 	AntButton* m_antBtn = nullptr;
+	QLabel* m_nameLabel = nullptr;
+	QLabel* m_roleLabel = nullptr;
+	QLabel* m_storageLabel = nullptr;
+	QLabel* m_fileCountLabel = nullptr;
+	QLabel* m_lastLoginLabel = nullptr;
 };

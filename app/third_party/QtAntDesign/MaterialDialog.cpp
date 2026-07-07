@@ -81,7 +81,7 @@ MaterialDialog::MaterialDialog(bool loginState, std::function<void(MaterialDialo
 	stackedWidget->addWidget(profilePage);
 
 	// 根据用户初始登录状态决定显示什么样的界面
-	showIndexPage(loginState ? Login : Profile);
+	showIndexPage(loginState ? Profile : Login);
 
 	connect(DesignSystem::instance(), &DesignSystem::themeChanged, this, [this]()
 		{

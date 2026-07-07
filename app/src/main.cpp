@@ -6,11 +6,14 @@
 #include <QStandardPaths>
 
 #include "AppShell.h"
+#include "AuthService.h"
 #include "core/DatabaseManager.h"
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    QCoreApplication::setOrganizationName("FMS");
+    QCoreApplication::setApplicationName("FMS");
 
     const int fontId = QFontDatabase::addApplicationFont(":/fonts/NotoSansSC-Regular.ttf");
     if (fontId != -1) {
@@ -28,6 +31,7 @@ int main(int argc, char *argv[])
         QMessageBox::critical(nullptr, "Database Error", DatabaseManager::instance().lastError());
         return 1;
     }
+    AuthService::restoreRememberedLogin();
 
     AppShell window;
     window.setWindowTitle("文枢");

@@ -85,6 +85,9 @@ BubbleViewController::~BubbleViewController()
 
 void BubbleViewController::showAnimated(QPoint globalPos)
 {
+	if (bubble) {
+		bubble->refreshUserInfo();
+	}
 	proxy->update();  // 强制刷新一次图像缓存 预热缓存，避免动画前卡顿
 	// 设置初始缩放
 	QRect startRect(globalPos.x(), globalPos.y(), m_bubbleSize.width(), m_bubbleSize.height());

@@ -7,6 +7,7 @@
 #include "ErrorTipLabel.h"
 #include "AntButton.h"
 #include "LogoWidget.h"
+#include "AuthService.h"
 
 RegisterPageWidget::RegisterPageWidget(QWidget* parent)
 	: QWidget(parent)
@@ -118,9 +119,18 @@ RegisterPageWidget::RegisterPageWidget(QWidget* parent)
 
 			if (!hasError)
 			{
-				emit registerSuccess();
-				accountEdit->clear();
-				passwordEdit->clear();
+				AuthService authService;
+				if (authService.registerUser(accountEdit->text().trimmed(), passwordEdit->text()))
+				{
+					emit registerSuccess();
+					accountEdit->clear();
+					passwordEdit->clear();
+				}
+				else
+				{
+					accountEdit->errorHint();
+					errorTips[0]->showError("用户名已存在或注册失败!");
+				}
 			}
 		});
 
