@@ -35,3 +35,6 @@ ui_*.h
 Thumbs.db
 *.tmp
 *.log
+
+# Third party
+app/third_party/

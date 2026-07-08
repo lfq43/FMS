@@ -58,6 +58,7 @@ FileService::~FileService()
 bool FileService::backupOnAddEnabled()
 {
     return appSettings().value(kBackupOnAddKey, true).toBool();
+    //返回kBackupOnAddKey对应的QVariant变量，true是没有找到时的默认返回值
 }
 
 void FileService::setBackupOnAddEnabled(bool enabled)
@@ -65,13 +66,14 @@ void FileService::setBackupOnAddEnabled(bool enabled)
     QSettings settings = appSettings();
     settings.setValue(kBackupOnAddKey, enabled);
     settings.sync();
+    //强制设置从内存写入磁盘
 }
 
 QString FileService::backupRootPath()
 {
     const QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/storage";
     const QString savedPath = appSettings().value(kBackupRootPathKey, defaultPath).toString().trimmed();
-    return QDir::fromNativeSeparators(savedPath.isEmpty() ? defaultPath : savedPath);
+    return QDir::fromNativeSeparators(savedPath.isEmpty() ? defaultPath : savedPath);//转换分隔符
 }
 
 bool FileService::setBackupRootPath(const QString& path)
