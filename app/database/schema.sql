@@ -161,6 +161,33 @@ CREATE TABLE IF NOT EXISTS folder_permissions (
     FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS access_grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type TEXT NOT NULL CHECK (resource_type IN ('file', 'folder')),
+    resource_id INTEGER NOT NULL,
+    grantee_user_id INTEGER NOT NULL,
+    granted_by_user_id INTEGER NOT NULL,
+    access_level TEXT NOT NULL DEFAULT 'view' CHECK (access_level IN ('view', 'edit', 'share')),
+    inherit_to_children INTEGER NOT NULL DEFAULT 1 CHECK (inherit_to_children IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT,
+    UNIQUE (resource_type, resource_id, grantee_user_id),
+    FOREIGN KEY (grantee_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (granted_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS resource_passwords (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type TEXT NOT NULL CHECK (resource_type IN ('file', 'folder')),
+    resource_id INTEGER NOT NULL,
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (resource_type, resource_id)
+);
+
 CREATE TABLE IF NOT EXISTS share_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id INTEGER,
@@ -258,6 +285,9 @@ CREATE INDEX IF NOT EXISTS idx_file_versions_file ON file_versions(file_id, vers
 CREATE INDEX IF NOT EXISTS idx_file_chunks_version ON file_chunks(version_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_file_permissions_user ON file_permissions(user_id, permission);
 CREATE INDEX IF NOT EXISTS idx_folder_permissions_user ON folder_permissions(user_id, permission);
+CREATE INDEX IF NOT EXISTS idx_access_grants_grantee ON access_grants(grantee_user_id, resource_type, access_level);
+CREATE INDEX IF NOT EXISTS idx_access_grants_resource ON access_grants(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_resource_passwords_resource ON resource_passwords(resource_type, resource_id);
 CREATE INDEX IF NOT EXISTS idx_share_links_token ON share_links(token);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_actor_time ON operation_logs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_target ON operation_logs(target_type, target_id);

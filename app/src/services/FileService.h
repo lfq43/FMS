@@ -6,6 +6,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 class QSqlQuery;
 
@@ -24,6 +25,7 @@ struct LocalFileInfo {
     QString mimeType;
     qint64 fileSize = 0;
     QString checksumSha256;
+    QStringList tags;
 
     QDateTime addedAt;
     QDateTime modifiedAt;
@@ -64,7 +66,10 @@ public:
     bool restoreVersion(int ownerId, int fileId, int versionId);
 
     QList<LocalFileInfo> listFiles(int ownerId, int folderId = -1) const;
+    QList<LocalFileInfo> listSharedFiles(int userId, int folderId = -1) const;
     QList<LocalFileInfo> getAllFiles() const;
+    QStringList tagsForFile(int ownerId, int fileId) const;
+    bool setFileTags(int ownerId, int fileId, const QStringList& tags);
 
     bool moveFile(int ownerId, int fileId, int targetFolderId);
     bool copyFile(int ownerId, int fileId, int targetFolderId, int* outFileId = nullptr);

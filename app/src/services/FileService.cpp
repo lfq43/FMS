@@ -10,8 +10,10 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QVariant>
 
+#include "AccessControlService.h"
 #include "AuthService.h"
 
 namespace {
@@ -42,6 +44,43 @@ QString safePathPart(QString value)
         value.replace(ch, "_");
     }
     return value;
+}
+
+QStringList normalizeTags(const QStringList& tags)
+{
+    QStringList normalized;
+    for (QString tag : tags) {
+        tag = tag.trimmed();
+        if (tag.isEmpty()) {
+            continue;
+        }
+        if (!normalized.contains(tag, Qt::CaseInsensitive)) {
+            normalized.append(tag);
+        }
+    }
+    return normalized;
+}
+
+int fileOwnerId(int fileId)
+{
+    QSqlQuery query;
+    query.prepare("SELECT owner_id FROM files WHERE id = :file_id AND is_trashed = 0");
+    query.bindValue(":file_id", fileId);
+    if (query.exec() && query.next()) {
+        return query.value("owner_id").toInt();
+    }
+    return -1;
+}
+
+int folderOwnerId(int folderId)
+{
+    QSqlQuery query;
+    query.prepare("SELECT owner_id FROM folders WHERE id = :folder_id AND is_trashed = 0");
+    query.bindValue(":folder_id", folderId);
+    if (query.exec() && query.next()) {
+        return query.value("owner_id").toInt();
+    }
+    return -1;
 }
 }
 
@@ -103,6 +142,16 @@ bool FileService::addLocalFile(int ownerId, int folderId, const QString& filePat
         return false;
     }
 
+    int actualOwnerId = ownerId;
+    if (folderId > 0) {
+        const AccessControlService accessControl;
+        actualOwnerId = folderOwnerId(folderId);
+        if (actualOwnerId <= 0 || !accessControl.canEditFolder(ownerId, folderId)) {
+            qDebug() << "Add file failed: no edit access to target folder";
+            return false;
+        }
+    }
+
     QFileInfo info(filePath);
     if (!info.exists() || !info.isFile()) {
         qDebug() << "Add file failed: invalid file" << filePath;
@@ -124,7 +173,7 @@ bool FileService::addLocalFile(int ownerId, int folderId, const QString& filePat
     insertFile.prepare("INSERT INTO files "
                        "(owner_id, folder_id, name, original_path, extension, mime_type, size_bytes, checksum_sha256, created_at, updated_at) "
                        "VALUES (:owner_id, :folder_id, :name, :original_path, :extension, :mime_type, :size_bytes, :checksum, datetime('now'), datetime('now'))");
-    insertFile.bindValue(":owner_id", ownerId);
+    insertFile.bindValue(":owner_id", actualOwnerId);
     insertFile.bindValue(":folder_id", nullableId(folderId));
     insertFile.bindValue(":name", info.fileName());
     insertFile.bindValue(":original_path", info.absoluteFilePath());
@@ -141,7 +190,7 @@ bool FileService::addLocalFile(int ownerId, int folderId, const QString& filePat
 
     const int fileId = insertFile.lastInsertId().toInt();
     const int versionNo = 1;
-    const QString storagePath = backupFile ? backupFileToStorage(ownerId, fileId, versionNo, filePath) : info.absoluteFilePath();
+    const QString storagePath = backupFile ? backupFileToStorage(actualOwnerId, fileId, versionNo, filePath) : info.absoluteFilePath();
     if (storagePath.isEmpty()) {
         db.rollback();
         return false;
@@ -200,6 +249,16 @@ bool FileService::createNewVersion(int ownerId, int fileId, const QString& fileP
         return false;
     }
 
+    const AccessControlService accessControl;
+    if (!accessControl.canEditFile(ownerId, fileId)) {
+        return false;
+    }
+
+    const int actualOwnerId = fileOwnerId(fileId);
+    if (actualOwnerId <= 0) {
+        return false;
+    }
+
     QFileInfo info(filePath);
     if (!info.exists() || !info.isFile()) {
         return false;
@@ -207,7 +266,7 @@ bool FileService::createNewVersion(int ownerId, int fileId, const QString& fileP
 
     const QString checksum = calculateChecksum(filePath);
     const int versionNo = nextVersionNo(fileId);
-    const QString storagePath = backupFile ? backupFileToStorage(ownerId, fileId, versionNo, filePath) : info.absoluteFilePath();
+    const QString storagePath = backupFile ? backupFileToStorage(actualOwnerId, fileId, versionNo, filePath) : info.absoluteFilePath();
     if (checksum.isEmpty() || storagePath.isEmpty()) {
         return false;
     }
@@ -240,7 +299,7 @@ bool FileService::createNewVersion(int ownerId, int fileId, const QString& fileP
     updateFile.prepare("UPDATE files "
                        "SET current_version_id = :version_id, name = :name, original_path = :original_path, extension = :extension, mime_type = :mime_type, "
                        "size_bytes = :size_bytes, checksum_sha256 = :checksum, updated_at = datetime('now') "
-                       "WHERE id = :file_id AND owner_id = :owner_id");
+                       "WHERE id = :file_id AND is_trashed = 0");
     updateFile.bindValue(":version_id", versionId);
     updateFile.bindValue(":name", info.fileName());
     updateFile.bindValue(":original_path", info.absoluteFilePath());
@@ -249,7 +308,6 @@ bool FileService::createNewVersion(int ownerId, int fileId, const QString& fileP
     updateFile.bindValue(":size_bytes", info.size());
     updateFile.bindValue(":checksum", checksum);
     updateFile.bindValue(":file_id", fileId);
-    updateFile.bindValue(":owner_id", ownerId);
     if (!updateFile.exec() || updateFile.numRowsAffected() <= 0) {
         qDebug() << "Update file version pointer failed:" << updateFile.lastError().text();
         db.rollback();
@@ -262,14 +320,18 @@ bool FileService::createNewVersion(int ownerId, int fileId, const QString& fileP
 QList<FileVersionInfo> FileService::listVersions(int ownerId, int fileId) const
 {
     QList<FileVersionInfo> versions;
+    const AccessControlService accessControl;
+    if (!accessControl.canViewFile(ownerId, fileId)) {
+        return versions;
+    }
+
     QSqlQuery query;
     query.prepare("SELECT v.id, v.file_id, v.version_no, v.storage_path, v.original_name, v.size_bytes, "
                   "v.checksum_sha256, v.change_note, v.created_by, v.created_at "
                   "FROM file_versions v "
                   "JOIN files f ON f.id = v.file_id "
-                  "WHERE f.owner_id = :owner_id AND v.file_id = :file_id "
+                  "WHERE f.id = :file_id AND f.is_trashed = 0 "
                   "ORDER BY v.version_no DESC");
-    query.bindValue(":owner_id", ownerId);
     query.bindValue(":file_id", fileId);
     if (!query.exec()) {
         qDebug() << "List versions failed:" << query.lastError().text();
@@ -295,6 +357,11 @@ QList<FileVersionInfo> FileService::listVersions(int ownerId, int fileId) const
 
 bool FileService::restoreVersion(int ownerId, int fileId, int versionId)
 {
+    const AccessControlService accessControl;
+    if (!accessControl.canEditFile(ownerId, fileId)) {
+        return false;
+    }
+
     QSqlQuery query;
     query.prepare("SELECT storage_path, original_name, size_bytes, checksum_sha256 "
                   "FROM file_versions WHERE id = :version_id AND file_id = :file_id");
@@ -308,18 +375,22 @@ bool FileService::restoreVersion(int ownerId, int fileId, int versionId)
     const QString originalName = query.value("original_name").toString();
     const qint64 sizeBytes = query.value("size_bytes").toLongLong();
     const QString checksum = query.value("checksum_sha256").toString();
+    const QFileInfo restoredInfo(originalName);
 
     QSqlQuery updateQuery;
     updateQuery.prepare("UPDATE files "
-                        "SET current_version_id = :version_id, name = :name, size_bytes = :size_bytes, "
+                        "SET current_version_id = :version_id, name = :name, original_path = :original_path, "
+                        "extension = :extension, mime_type = :mime_type, size_bytes = :size_bytes, "
                         "checksum_sha256 = :checksum, updated_at = datetime('now') "
-                        "WHERE id = :file_id AND owner_id = :owner_id");
+                        "WHERE id = :file_id AND is_trashed = 0");
     updateQuery.bindValue(":version_id", versionId);
     updateQuery.bindValue(":name", originalName);
+    updateQuery.bindValue(":original_path", storagePath);
+    updateQuery.bindValue(":extension", restoredInfo.suffix());
+    updateQuery.bindValue(":mime_type", detectMimeType(restoredInfo));
     updateQuery.bindValue(":size_bytes", sizeBytes);
     updateQuery.bindValue(":checksum", checksum);
     updateQuery.bindValue(":file_id", fileId);
-    updateQuery.bindValue(":owner_id", ownerId);
 
     if (!updateQuery.exec()) {
         qDebug() << "Restore version failed:" << updateQuery.lastError().text() << storagePath;
@@ -339,10 +410,13 @@ QList<LocalFileInfo> FileService::listFiles(int ownerId, int folderId) const
     const QString folderFilter = folderId > 0 ? "f.folder_id = :folder_id" : "f.folder_id IS NULL";
     query.prepare(QString("SELECT f.id, f.owner_id, f.folder_id, f.category_id, f.current_version_id, "
                           "f.name, f.original_path, f.extension, f.mime_type, f.size_bytes, f.checksum_sha256, f.created_at, f.updated_at, "
-                          "f.is_trashed, v.storage_path, v.change_note "
+                          "f.is_trashed, v.storage_path, v.change_note, GROUP_CONCAT(t.name, ',') AS tags "
                           "FROM files f "
                           "LEFT JOIN file_versions v ON v.id = f.current_version_id "
+                          "LEFT JOIN file_tags ft ON ft.file_id = f.id "
+                          "LEFT JOIN tags t ON t.id = ft.tag_id "
                           "WHERE f.owner_id = :owner_id AND %1 AND f.is_trashed = 0 "
+                          "GROUP BY f.id "
                           "ORDER BY f.updated_at DESC").arg(folderFilter));
     query.bindValue(":owner_id", ownerId);
     if (folderId > 0) {
@@ -360,9 +434,176 @@ QList<LocalFileInfo> FileService::listFiles(int ownerId, int folderId) const
     return files;
 }
 
+QList<LocalFileInfo> FileService::listSharedFiles(int userId, int folderId) const
+{
+    QList<LocalFileInfo> files;
+    if (userId <= 0) {
+        return files;
+    }
+
+    const AccessControlService accessControl;
+    QSqlQuery query;
+    const QString folderFilter = folderId > 0 ? "f.folder_id = :folder_id" : "g.resource_type = 'file'";
+    query.prepare(QString(
+        "SELECT f.id, f.owner_id, f.folder_id, f.category_id, f.current_version_id, "
+        "f.name, f.original_path, f.extension, f.mime_type, f.size_bytes, f.checksum_sha256, f.created_at, f.updated_at, "
+        "f.is_trashed, v.storage_path, v.change_note, GROUP_CONCAT(t.name, ',') AS tags "
+        "FROM files f "
+        "LEFT JOIN file_versions v ON v.id = f.current_version_id "
+        "LEFT JOIN file_tags ftags ON ftags.file_id = f.id "
+        "LEFT JOIN tags t ON t.id = ftags.tag_id "
+        "LEFT JOIN access_grants g ON g.resource_type = 'file' "
+        "    AND g.resource_id = f.id "
+        "    AND g.grantee_user_id = :user_id "
+        "    AND (g.expires_at IS NULL OR g.expires_at > datetime('now')) "
+        "WHERE f.owner_id != :user_id "
+        "AND f.is_trashed = 0 "
+        "AND %1 "
+        "GROUP BY f.id "
+        "ORDER BY f.updated_at DESC").arg(folderFilter));
+    query.bindValue(":user_id", userId);
+    if (folderId > 0) {
+        query.bindValue(":folder_id", folderId);
+    }
+
+    if (!query.exec()) {
+        qDebug() << "List shared files failed:" << query.lastError().text();
+        return files;
+    }
+
+    while (query.next()) {
+        const LocalFileInfo info = readFileInfoFromQuery(query);
+        if (accessControl.canViewFile(userId, info.fileId)) {
+            files.append(info);
+        }
+    }
+    return files;
+}
+
 QList<LocalFileInfo> FileService::getAllFiles() const
 {
     return listFiles(AuthService::currentUserId());
+}
+
+QStringList FileService::tagsForFile(int ownerId, int fileId) const
+{
+    QStringList tags;
+    const AccessControlService accessControl;
+    if (!accessControl.canViewFile(ownerId, fileId)) {
+        return tags;
+    }
+
+    QSqlQuery query;
+    query.prepare("SELECT t.name FROM tags t "
+                  "JOIN file_tags ft ON ft.tag_id = t.id "
+                  "JOIN files f ON f.id = ft.file_id "
+                  "WHERE f.id = :file_id AND f.is_trashed = 0 "
+                  "ORDER BY t.name COLLATE NOCASE");
+    query.bindValue(":file_id", fileId);
+    if (!query.exec()) {
+        qDebug() << "List file tags failed:" << query.lastError().text();
+        return tags;
+    }
+
+    while (query.next()) {
+        tags.append(query.value(0).toString());
+    }
+    return tags;
+}
+
+bool FileService::setFileTags(int ownerId, int fileId, const QStringList& tags)
+{
+    if (ownerId <= 0 || fileId <= 0) {
+        return false;
+    }
+
+    const AccessControlService accessControl;
+    if (!accessControl.canEditFile(ownerId, fileId)) {
+        return false;
+    }
+
+    const int actualOwnerId = fileOwnerId(fileId);
+    if (actualOwnerId <= 0) {
+        return false;
+    }
+
+    QSqlDatabase db = QSqlDatabase::database();
+    if (!db.transaction()) {
+        return false;
+    }
+
+    QSqlQuery fileQuery(db);
+    fileQuery.prepare("SELECT name, extension FROM files WHERE id = :file_id AND is_trashed = 0");
+    fileQuery.bindValue(":file_id", fileId);
+    if (!fileQuery.exec() || !fileQuery.next()) {
+        db.rollback();
+        return false;
+    }
+
+    QSqlQuery deleteQuery(db);
+    deleteQuery.prepare("DELETE FROM file_tags WHERE file_id = :file_id");
+    deleteQuery.bindValue(":file_id", fileId);
+    if (!deleteQuery.exec()) {
+        qDebug() << "Clear file tags failed:" << deleteQuery.lastError().text();
+        db.rollback();
+        return false;
+    }
+
+    const QStringList normalizedTags = normalizeTags(tags);
+    for (const QString& tag : normalizedTags) {
+        QSqlQuery insertTag(db);
+        insertTag.prepare("INSERT OR IGNORE INTO tags (owner_id, name, created_at) VALUES (:owner_id, :name, datetime('now'))");
+        insertTag.bindValue(":owner_id", actualOwnerId);
+        insertTag.bindValue(":name", tag);
+        if (!insertTag.exec()) {
+            qDebug() << "Insert tag failed:" << insertTag.lastError().text();
+            db.rollback();
+            return false;
+        }
+
+        QSqlQuery tagIdQuery(db);
+        tagIdQuery.prepare("SELECT id FROM tags WHERE owner_id = :owner_id AND name = :name");
+        tagIdQuery.bindValue(":owner_id", actualOwnerId);
+        tagIdQuery.bindValue(":name", tag);
+        if (!tagIdQuery.exec() || !tagIdQuery.next()) {
+            db.rollback();
+            return false;
+        }
+
+        QSqlQuery linkQuery(db);
+        linkQuery.prepare("INSERT OR IGNORE INTO file_tags (file_id, tag_id, created_at) VALUES (:file_id, :tag_id, datetime('now'))");
+        linkQuery.bindValue(":file_id", fileId);
+        linkQuery.bindValue(":tag_id", tagIdQuery.value(0).toInt());
+        if (!linkQuery.exec()) {
+            qDebug() << "Link file tag failed:" << linkQuery.lastError().text();
+            db.rollback();
+            return false;
+        }
+    }
+
+    QSqlQuery updateSearchIndex(db);
+    updateSearchIndex.prepare("INSERT OR REPLACE INTO file_search_index "
+                              "(file_id, file_name, extension, tags, updated_at) "
+                              "VALUES (:file_id, :file_name, :extension, :tags, datetime('now'))");
+    updateSearchIndex.bindValue(":file_id", fileId);
+    updateSearchIndex.bindValue(":file_name", fileQuery.value("name").toString());
+    updateSearchIndex.bindValue(":extension", fileQuery.value("extension").toString());
+    updateSearchIndex.bindValue(":tags", normalizedTags.join(", "));
+    if (!updateSearchIndex.exec()) {
+        qDebug() << "Update search index tags failed:" << updateSearchIndex.lastError().text();
+        db.rollback();
+        return false;
+    }
+
+    QSqlQuery touchFile(db);
+    touchFile.prepare("UPDATE files SET updated_at = datetime('now') WHERE id = :file_id AND is_trashed = 0");
+    touchFile.bindValue(":file_id", fileId);
+    if (!touchFile.exec()) {
+        db.rollback();
+        return false;
+    }
+
+    return db.commit();
 }
 
 bool FileService::moveFile(int ownerId, int fileId, int targetFolderId)
@@ -371,13 +612,26 @@ bool FileService::moveFile(int ownerId, int fileId, int targetFolderId)
         return false;
     }
 
+    const AccessControlService accessControl;
+    if (!accessControl.canEditFile(ownerId, fileId)) {
+        return false;
+    }
+
+    const int actualOwnerId = fileOwnerId(fileId);
+    if (actualOwnerId <= 0) {
+        return false;
+    }
+    if (targetFolderId > 0 && (folderOwnerId(targetFolderId) != actualOwnerId || !accessControl.canEditFolder(ownerId, targetFolderId))) {
+        return false;
+    }
+
     QSqlQuery duplicateQuery;
     const QString folderFilter = targetFolderId > 0 ? "folder_id = :folder_id" : "folder_id IS NULL";
     duplicateQuery.prepare(QString("SELECT 1 FROM files "
                                    "WHERE owner_id = :owner_id AND %1 AND name = ("
-                                   "SELECT name FROM files WHERE id = :file_id AND owner_id = :owner_id AND is_trashed = 0"
+                                   "SELECT name FROM files WHERE id = :file_id AND is_trashed = 0"
                                    ") AND id != :file_id AND is_trashed = 0").arg(folderFilter));
-    duplicateQuery.bindValue(":owner_id", ownerId);
+    duplicateQuery.bindValue(":owner_id", actualOwnerId);
     duplicateQuery.bindValue(":file_id", fileId);
     if (targetFolderId > 0) {
         duplicateQuery.bindValue(":folder_id", targetFolderId);
@@ -391,7 +645,7 @@ bool FileService::moveFile(int ownerId, int fileId, int targetFolderId)
                   "WHERE id = :file_id AND owner_id = :owner_id AND is_trashed = 0");
     query.bindValue(":folder_id", nullableId(targetFolderId));
     query.bindValue(":file_id", fileId);
-    query.bindValue(":owner_id", ownerId);
+    query.bindValue(":owner_id", actualOwnerId);
     if (!query.exec()) {
         qDebug() << "Move file failed:" << query.lastError().text();
         return false;
@@ -405,6 +659,18 @@ bool FileService::copyFile(int ownerId, int fileId, int targetFolderId, int* out
         return false;
     }
 
+    const AccessControlService accessControl;
+    if (!accessControl.canViewFile(ownerId, fileId)) {
+        return false;
+    }
+    int targetOwnerId = ownerId;
+    if (targetFolderId > 0) {
+        targetOwnerId = folderOwnerId(targetFolderId);
+        if (targetOwnerId <= 0 || !accessControl.canEditFolder(ownerId, targetFolderId)) {
+            return false;
+        }
+    }
+
     QSqlDatabase db = QSqlDatabase::database();
     if (!db.transaction()) {
         return false;
@@ -415,9 +681,8 @@ bool FileService::copyFile(int ownerId, int fileId, int targetFolderId, int* out
                         "v.storage_path, v.original_name, v.change_note "
                         "FROM files f "
                         "LEFT JOIN file_versions v ON v.id = f.current_version_id "
-                        "WHERE f.id = :file_id AND f.owner_id = :owner_id AND f.is_trashed = 0");
+                        "WHERE f.id = :file_id AND f.is_trashed = 0");
     sourceQuery.bindValue(":file_id", fileId);
-    sourceQuery.bindValue(":owner_id", ownerId);
     if (!sourceQuery.exec() || !sourceQuery.next()) {
         db.rollback();
         return false;
@@ -428,7 +693,7 @@ bool FileService::copyFile(int ownerId, int fileId, int targetFolderId, int* out
     const QString folderFilter = targetFolderId > 0 ? "folder_id = :folder_id" : "folder_id IS NULL";
     duplicateQuery.prepare(QString("SELECT 1 FROM files "
                                    "WHERE owner_id = :owner_id AND %1 AND name = :name AND is_trashed = 0").arg(folderFilter));
-    duplicateQuery.bindValue(":owner_id", ownerId);
+    duplicateQuery.bindValue(":owner_id", targetOwnerId);
     duplicateQuery.bindValue(":name", targetName);
     if (targetFolderId > 0) {
         duplicateQuery.bindValue(":folder_id", targetFolderId);
@@ -448,7 +713,7 @@ bool FileService::copyFile(int ownerId, int fileId, int targetFolderId, int* out
     insertFile.prepare("INSERT INTO files "
                        "(owner_id, folder_id, name, original_path, extension, mime_type, size_bytes, checksum_sha256, created_at, updated_at) "
                        "VALUES (:owner_id, :folder_id, :name, :original_path, :extension, :mime_type, :size_bytes, :checksum, datetime('now'), datetime('now'))");
-    insertFile.bindValue(":owner_id", ownerId);
+    insertFile.bindValue(":owner_id", targetOwnerId);
     insertFile.bindValue(":folder_id", nullableId(targetFolderId));
     insertFile.bindValue(":name", targetName);
     insertFile.bindValue(":original_path", sourceQuery.value("original_path"));
@@ -485,6 +750,16 @@ bool FileService::copyFile(int ownerId, int fileId, int targetFolderId, int* out
     updateFile.bindValue(":version_id", insertVersion.lastInsertId().toInt());
     updateFile.bindValue(":file_id", newFileId);
     if (!updateFile.exec()) {
+        db.rollback();
+        return false;
+    }
+
+    QSqlQuery copyTags(db);
+    copyTags.prepare("INSERT OR IGNORE INTO file_tags (file_id, tag_id, created_at) "
+                     "SELECT :new_file_id, tag_id, datetime('now') FROM file_tags WHERE file_id = :source_file_id");
+    copyTags.bindValue(":new_file_id", newFileId);
+    copyTags.bindValue(":source_file_id", fileId);
+    if (!copyTags.exec()) {
         db.rollback();
         return false;
     }
@@ -627,6 +902,10 @@ LocalFileInfo FileService::readFileInfoFromQuery(const QSqlQuery& query) const
     info.isTrashed = query.value("is_trashed").toBool();
     info.storagePath = query.value("storage_path").toString();
     info.filePath = query.value("original_path").toString();
+    info.tags = query.value("tags").toString().split(",", Qt::SkipEmptyParts);
+    for (QString& tag : info.tags) {
+        tag = tag.trimmed();
+    }
     if (info.filePath.isEmpty()) {
         info.filePath = info.storagePath;
     }

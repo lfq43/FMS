@@ -27,6 +27,7 @@ set(ANT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/QtAntDesign")
 file(GLOB ANT_SRC "${ANT_DIR}/*.cpp")
 file(GLOB ANT_HEADERS "${ANT_DIR}/*.h" "${ANT_DIR}/*.hpp")
 file(GLOB ANT_QRC "${ANT_DIR}/*.qrc")
+file(GLOB ANT_UI "${ANT_DIR}/*.ui")
 file(GLOB_RECURSE ANT_THIRD_PARTY_SRC "${ANT_DIR}/ThirdParty/*.cpp")
 file(GLOB_RECURSE ANT_THIRD_PARTY_HEADERS "${ANT_DIR}/ThirdParty/*.h" "${ANT_DIR}/ThirdParty/*.hpp")
 
@@ -46,6 +47,7 @@ set(PROJECT_SOURCES
     src/ui/AppShell.ui
     ${ANT_SRC}
     ${ANT_HEADERS}
+    ${ANT_UI}
     ${ANT_QRC}
     ${ANT_THIRD_PARTY_SRC}
     ${ANT_THIRD_PARTY_HEADERS}
@@ -57,6 +59,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         ${PROJECT_SOURCES}
         src/core/DatabaseManager.h src/core/DatabaseManager.cpp
         src/services/AuthService.h src/services/AuthService.cpp
+        src/services/AccessControlService.h src/services/AccessControlService.cpp
+        src/services/SecurityService.h src/services/SecurityService.cpp
         src/services/FileService.h src/services/FileService.cpp
         src/services/FolderService.h src/services/FolderService.cpp
 

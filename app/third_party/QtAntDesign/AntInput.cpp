@@ -65,6 +65,9 @@ void AntInput::mousePressEvent(QMouseEvent* event)
 	if (event->button() == Qt::LeftButton)
 	{
 		AntBaseInput::mousePressEvent(event);
+		if (!popupView->popup->model() || popupView->popup->model()->rowCount() == 0) {
+			return;
+		}
 		QPoint popupPos = mapToGlobal(QPoint(0, height()));
 		DesignSystem::instance()->getTransparentMask()->show();
 		popupView->raise();

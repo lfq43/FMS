@@ -5,6 +5,8 @@
 #include <QSqlQuery>
 #include <QVariant>
 
+#include "AccessControlService.h"
+
 namespace {
 QVariant nullableFolderId(int folderId)
 {
@@ -14,6 +16,17 @@ QVariant nullableFolderId(int folderId)
 QString normalizedFolderName(const QString& name)
 {
     return name.trimmed();
+}
+
+int folderOwnerId(int folderId)
+{
+    QSqlQuery query;
+    query.prepare("SELECT owner_id FROM folders WHERE id = :folder_id AND is_trashed = 0");
+    query.bindValue(":folder_id", folderId);
+    if (query.exec() && query.next()) {
+        return query.value("owner_id").toInt();
+    }
+    return -1;
 }
 }
 
@@ -28,18 +41,23 @@ bool FolderService::createFolder(int ownerId, int parentId, const QString& name,
         return false;
     }
 
-    if (parentId > 0 && !folderExists(ownerId, parentId)) {
-        return false;
+    int actualOwnerId = ownerId;
+    if (parentId > 0) {
+        const AccessControlService accessControl;
+        actualOwnerId = folderOwnerId(parentId);
+        if (actualOwnerId <= 0 || !accessControl.canEditFolder(ownerId, parentId)) {
+            return false;
+        }
     }
 
-    if (hasDuplicateName(ownerId, parentId, folderName)) {
+    if (hasDuplicateName(actualOwnerId, parentId, folderName)) {
         return false;
     }
 
     QSqlQuery query;
     query.prepare("INSERT INTO folders (owner_id, parent_id, name, local_path, created_at, updated_at) "
                   "VALUES (:owner_id, :parent_id, :name, :local_path, datetime('now'), datetime('now'))");
-    query.bindValue(":owner_id", ownerId);
+    query.bindValue(":owner_id", actualOwnerId);
     query.bindValue(":parent_id", nullableFolderId(parentId));
     query.bindValue(":name", folderName);
     query.bindValue(":local_path", localPath.trimmed());
@@ -196,6 +214,100 @@ QList<FolderInfo> FolderService::folderPath(int ownerId, int folderId) const
         const FolderInfo info = readFolderInfoFromQuery(query);
         path.prepend(info);
         currentId = info.parentId;
+    }
+    return path;
+}
+
+QList<FolderInfo> FolderService::listSharedRootFolders(int userId) const
+{
+    QList<FolderInfo> folders;
+    if (userId <= 0) {
+        return folders;
+    }
+
+    QSqlQuery query;
+    query.prepare("SELECT f.id, f.owner_id, f.parent_id, f.name, f.local_path, f.description, f.is_trashed, f.created_at, f.updated_at "
+                  "FROM folders f "
+                  "JOIN access_grants g ON g.resource_type = 'folder' AND g.resource_id = f.id "
+                  "WHERE g.grantee_user_id = :user_id "
+                  "AND f.owner_id != :user_id "
+                  "AND f.is_trashed = 0 "
+                  "AND (g.expires_at IS NULL OR g.expires_at > datetime('now')) "
+                  "ORDER BY f.name COLLATE NOCASE ASC");
+    query.bindValue(":user_id", userId);
+    if (!query.exec()) {
+        qDebug() << "List shared root folders failed:" << query.lastError().text();
+        return folders;
+    }
+
+    while (query.next()) {
+        folders.append(readFolderInfoFromQuery(query));
+    }
+    return folders;
+}
+
+QList<FolderInfo> FolderService::listAccessibleChildFolders(int userId, int parentId) const
+{
+    QList<FolderInfo> folders;
+    if (userId <= 0 || parentId <= 0) {
+        return folders;
+    }
+
+    const AccessControlService accessControl;
+    if (!accessControl.canViewFolder(userId, parentId)) {
+        return folders;
+    }
+
+    QSqlQuery query;
+    query.prepare("SELECT id, owner_id, parent_id, name, local_path, description, is_trashed, created_at, updated_at "
+                  "FROM folders "
+                  "WHERE parent_id = :parent_id AND is_trashed = 0 "
+                  "ORDER BY name COLLATE NOCASE ASC");
+    query.bindValue(":parent_id", parentId);
+    if (!query.exec()) {
+        qDebug() << "List accessible child folders failed:" << query.lastError().text();
+        return folders;
+    }
+
+    while (query.next()) {
+        const FolderInfo info = readFolderInfoFromQuery(query);
+        if (accessControl.canViewFolder(userId, info.folderId)) {
+            folders.append(info);
+        }
+    }
+    return folders;
+}
+
+QList<FolderInfo> FolderService::accessibleFolderPath(int userId, int folderId) const
+{
+    QList<FolderInfo> path;
+    if (userId <= 0 || folderId <= 0) {
+        return path;
+    }
+
+    const AccessControlService accessControl;
+    if (!accessControl.canViewFolder(userId, folderId)) {
+        return path;
+    }
+
+    int currentId = folderId;
+    while (currentId > 0) {
+        QSqlQuery query;
+        query.prepare("SELECT id, owner_id, parent_id, name, local_path, description, is_trashed, created_at, updated_at "
+                      "FROM folders WHERE id = :id AND is_trashed = 0");
+        query.bindValue(":id", currentId);
+        if (!query.exec() || !query.next()) {
+            path.clear();
+            return path;
+        }
+
+        const FolderInfo info = readFolderInfoFromQuery(query);
+        path.prepend(info);
+        currentId = info.parentId;
+    }
+
+    while (!path.isEmpty() && !accessControl.canViewFolder(userId, path.first().folderId)) {
+        path.removeFirst();
     }
     return path;
 }

@@ -1,6 +1,5 @@
 ﻿#include "AntMessageManager.h"
 #include <QApplication>
-#include "QtAntDesign.h"
 #include "DesignSystem.h"
 
 AntMessageManager* AntMessageManager::m_instance = nullptr;
